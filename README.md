@@ -1,4 +1,7 @@
 # Troc
+
+[![CI](https://github.com/curiousmindflow/troc/actions/workflows/ci.yml/badge.svg)](https://github.com/curiousmindflow/troc/actions/workflows/ci.yml)
+
 Troc is a Data Distribution Service implementation in Rust, using [sans-io](https://sans-io.readthedocs.io/) architecture pattern for maximum testability, flexibility, reliability and performance.
 
 ## About DDS

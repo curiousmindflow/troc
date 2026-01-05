@@ -15,6 +15,7 @@
    - 🚧 Observability
    - 🚧 unit and mutation testing on troc-core
    - 🚧 unit and integration testing on troc
+   - 🚧 CI/CD pipeline
 3. 📋 **Milestone 2: Production hardening**
     - 📋 Performance target achievement
     - 📋 property testing where needed
