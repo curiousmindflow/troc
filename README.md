@@ -1,7 +1,6 @@
 # Troc
 Troc is a Data Distribution Service implementation in Rust, using [sans-io](https://sans-io.readthedocs.io/) architecture pattern for maximum testability, flexibility, reliability and performance.
 
----
 ## About DDS
 Data Distribution Service (DDS) is a middleware protocol for real-time, data-centric publish-subscribe communication. It's widely used in:
 - Robotics (ROS 2 uses DDS underneath)
@@ -51,7 +50,6 @@ Complete implementation in Rust.
 - **Realization:** Tokio async runtime, Kameo actor framework
 - **Testing:** Unit tests (rstest), property-based testing (proptest), mutation testing (cargo-mutants), fuzzing (cargo-fuzz)
 
----
 ## Architecture
 See [ARCHITECTURE.md](ARCHITECTURE.md) for:
 - Detailed explanation of the sans-io pattern
@@ -59,14 +57,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for:
 - Test strategies for each layer
 - Performance considerations
 
----
 ## Changelog
 See [CHANGELOG.md](CHANGELOG.md).
 
----
 ## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
----
 ## License
 Apache 2.0 / MIT

@@ -8,7 +8,6 @@ The project is composed of:
 - **troc-derive**: Derive macro handling Keyed structures
 - **troc**: The Realization layer bridging core logic with I/O, Time, multithreading and concurrency, using Tokio
 
----
 # Troc-core
 This is the layer that focuses on the DDS protocol logic, using sans-io.
 
@@ -44,7 +43,6 @@ Since troc-core is fully testable, doesn't know about network or even time, the 
 - property testing
 - mutation testing
 
----
 # Troc
 Troc is the realization layer, the one that bridges troc-core with infrastructure.
 It's highly asynchronous, multithreaded, concurrent, uses channel for message passing, timer. It relies heavily on Tokio for those jobs.
@@ -131,7 +129,6 @@ Inject actor failures to test supervision and recovery:
 - No resource leaks (sockets, memory, file descriptors)
 - State is recovered or gracefully rebuilt
 
----
 # Performances considerations
 Troc goal is not to outperform the other DDS implementation. That being said, it must be usable and have close performances.
 

@@ -33,7 +33,6 @@
       - 📋 write and read to/from topics
     - 📋 Interoperability
 
----
 # Experimental
 ## Gossip protocol based Discovery
 The SPDP has been built to support small to medium scale systems. It relies mainly on udp multicast and is somewhat quite simple.
