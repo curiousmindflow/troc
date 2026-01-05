@@ -1,0 +1,7 @@
+[workspace]
+members = ["troc", "troc-cdr", "troc-core", "troc-derive"]
+resolver = "2"
+default-members = ["troc"]
+
+[workspace.dependencies]
+md5 = "0.7.0"

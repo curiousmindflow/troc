@@ -1,0 +1,17 @@
+[package]
+name = "troc-derive"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+proc-macro2 = "1.0.69"
+quote = "1.0.33"
+syn = "2.0.94"
+md5.workspace = true
+
+[dev-dependencies]
+troc-core = { path = "../troc-core" }
+cdr = "0.2.4"
+
+[lib]
+proc-macro = true

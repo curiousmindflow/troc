@@ -1,0 +1,6 @@
+mod best_effort_keep_last_volatile;
+mod best_effort_keep_all_volatile;
+mod reliable_keep_all_transient_local;
+mod reliable_keep_all_volatile;
+mod reliable_keep_last_transient_local;
+mod reliable_keep_last_volatile;
