@@ -1,22 +1,13 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, time::Duration};
 
 use bytes::BytesMut;
+use chrono::Utc;
 use kameo::{Actor, prelude::Message};
-use tokio::{
-    runtime::Handle,
-    select,
-    sync::mpsc::{Receiver, Sender},
-    time::{Instant, sleep},
-};
-use tokio_util::sync::CancellationToken;
+use tokio::time::{Instant, sleep};
 use tracing::{Level, event};
 use troc_core::{
-    DdsError, Discovery as ProtocolDiscovery, DiscoveryBuilder, DiscoveryConfiguration,
-    IncommingMessage, OutcommingMessage, ReaderProxy, WriterProxy,
+    DdsError, Discovery as ProtocolDiscovery, DiscoveryBuilder, DiscoveryConfiguration, Effect,
+    Effects, IncommingMessage, OutcommingMessage, ReaderProxy, WriterProxy,
 };
 
 use troc_core::types::{EntityId, InlineQos, ParticipantProxy};
@@ -24,21 +15,21 @@ use troc_core::types::{EntityId, InlineQos, ParticipantProxy};
 use crate::discovery::DiscoveryEvent;
 
 #[derive(Debug)]
-pub enum EndpointLifecycleCommand {
+pub enum DiscoveryActorMessage {
+    ParticipantProxyChanged(ParticipantProxy),
     WriterCreated {
         writer_proxy: WriterProxy,
-        inline_qos: InlineQos,
-        command_sender: Sender<()>,
     },
+    WriterRemoved(EntityId),
     ReaderCreated {
         reader_proxy: ReaderProxy,
-        inline_qos: InlineQos,
-        command_sender: Sender<()>,
+    },
+    ReaderRemoved(EntityId),
+    Tick,
+    Message {
+        message: troc_core::messages::Message,
     },
 }
-
-#[derive(Debug)]
-pub enum DiscoveryActorMessage {}
 
 impl Message<DiscoveryActorMessage> for DiscoveryActor {
     type Reply = ();
@@ -48,18 +39,51 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
         msg: DiscoveryActorMessage,
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        todo!()
+        let now = Utc::now().timestamp_millis();
+        match msg {
+            DiscoveryActorMessage::ParticipantProxyChanged(participant_proxy) => {
+                self.discovery
+                    .update_participant_infos(&mut self.effects, participant_proxy)
+                    .unwrap();
+            }
+            DiscoveryActorMessage::WriterCreated { writer_proxy } => {
+                self.discovery
+                    .add_publications_infos(&mut self.effects, writer_proxy, InlineQos::default())
+                    .unwrap();
+            }
+            DiscoveryActorMessage::WriterRemoved(entity_id) => {
+                self.discovery.remove_publications_infos(entity_id).unwrap();
+            }
+            DiscoveryActorMessage::ReaderCreated { reader_proxy } => self
+                .discovery
+                .add_subscriptions_infos(&mut self.effects, reader_proxy, InlineQos::default())
+                .unwrap(),
+            DiscoveryActorMessage::ReaderRemoved(entity_id) => {
+                self.discovery
+                    .remove_subscriptions_infos(entity_id)
+                    .unwrap();
+            }
+            DiscoveryActorMessage::Tick => self.discovery.tick(&mut self.effects, now).unwrap(),
+            DiscoveryActorMessage::Message { message } => self
+                .discovery
+                .ingest(&mut self.effects, message, now)
+                .unwrap(),
+        }
+
+        while let Some(effect) = self.effects.pop() {
+            //
+        }
     }
 }
 
 #[derive()]
 pub struct DiscoveryActor {
-    disc: Arc<Mutex<ProtocolDiscovery>>,
-    cancellation_token: CancellationToken,
+    discovery: ProtocolDiscovery,
+    effects: Effects,
 }
 
 impl Actor for DiscoveryActor {
-    type Args = Self;
+    type Args = ();
 
     type Error = DdsError;
 
@@ -72,39 +96,35 @@ impl Actor for DiscoveryActor {
 }
 
 impl DiscoveryActor {
-    pub fn new() -> Self {
-        todo!()
-    }
+    // fn new_args(
+    //     participant_infos: ParticipantProxy,
+    //     participant_infos_receiver: Receiver<ParticipantProxy>,
+    //     endpoint_lifecycle_receiver: Receiver<EndpointLifecycleCommand>,
+    // ) -> Self {
+    //     let disc = DiscoveryBuilder::new(participant_infos, DiscoveryConfiguration::new()).build();
+    //     let disc = Arc::new(Mutex::new(disc));
+    //     let cancellation_token = CancellationToken::new();
 
-    fn new_args(
-        participant_infos: ParticipantProxy,
-        participant_infos_receiver: Receiver<ParticipantProxy>,
-        endpoint_lifecycle_receiver: Receiver<EndpointLifecycleCommand>,
-    ) -> Self {
-        // let disc = DiscoveryBuilder::new(participant_infos, DiscoveryConfiguration::new()).build();
-        // let disc = Arc::new(Mutex::new(disc));
-        // let cancellation_token = CancellationToken::new();
+    //     let myself = Self {
+    //         disc,
+    //         cancellation_token,
+    //     };
 
-        // let myself = Self {
-        //     disc,
-        //     cancellation_token,
-        // };
+    //     let applicative_writer_index =
+    //         HashMap::<EntityId, Sender<DataWriterProxyCommand>>::default();
+    //     // TODO: same for the Readers
 
-        // let applicative_writer_index =
-        //     HashMap::<EntityId, Sender<DataWriterProxyCommand>>::default();
-        // // TODO: same for the Readers
+    //     myself.launch(
+    //         applicative_writer_index,
+    //         participant_infos_receiver,
+    //         endpoint_lifecycle_receiver,
+    //     );
 
-        // myself.launch(
-        //     applicative_writer_index,
-        //     participant_infos_receiver,
-        //     endpoint_lifecycle_receiver,
-        // );
+    //     // TODO: launch input tasks
 
-        // // TODO: launch input tasks
-
-        // myself
-        todo!()
-    }
+    //     myself
+    //     todo!()
+    // }
 
     // fn launch(
     //     &self,

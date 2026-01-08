@@ -238,7 +238,7 @@ impl Discovery {
         self.edp_pub_announcer.add_change(effects, change)
     }
 
-    pub fn remove_publications_infos(&mut self) -> Result<&Effects, Error> {
+    pub fn remove_publications_infos(&mut self, entity_id: EntityId) -> Result<&Effects, Error> {
         // let _res = self
         //     .edp_pub_announcer
         //     .remove_change_for_instance(InstanceHandle::default());
@@ -275,7 +275,7 @@ impl Discovery {
         self.edp_pub_announcer.add_change(effects, change)
     }
 
-    pub fn remove_subscriptions_infos(&mut self) -> Result<&Effects, Error> {
+    pub fn remove_subscriptions_infos(&mut self, entity_id: EntityId) -> Result<&Effects, Error> {
         unimplemented!()
     }
 

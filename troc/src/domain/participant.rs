@@ -402,7 +402,7 @@ impl Actor for DomainParticipantActor {
         wire_factory.wait_for_startup().await;
         wire_factory.register(WIRE_FACTORY_ACTOR_NAME).unwrap();
         actor_ref.link(&wire_factory).await;
-        let discovery = DiscoveryActor::spawn(DiscoveryActor::new());
+        let discovery = DiscoveryActor::spawn(());
         discovery.wait_for_startup().await;
         discovery.register(DISCOVERY_ACTOR_NAME).unwrap();
         actor_ref.link(&discovery).await;
