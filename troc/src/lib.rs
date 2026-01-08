@@ -1,9 +1,9 @@
 // mod common;
-// mod discovery;
+mod discovery;
 mod domain;
 mod infrastructure;
-// mod io;
-// mod publication;
+mod publication;
+mod wires;
 // mod subscription;
+mod time;
 mod topic;
-// mod wires;

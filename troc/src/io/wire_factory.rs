@@ -7,8 +7,8 @@ use std::{
     sync::Arc,
 };
 
-use common::types::{Locator, LocatorKind, LocatorList};
 use local_ip_address::local_ip;
+use troc_core::types::{Locator, LocatorKind, LocatorList};
 
 use crate::{
     domain::{Configuration, UdpHelper},

@@ -163,7 +163,7 @@ impl DomainParticipantListener {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct DomainParticipantListenerHandle {
     queue_size: usize,
     pub(crate) sender: Option<Sender<ParticipantEvent>>,

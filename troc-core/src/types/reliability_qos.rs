@@ -1,9 +1,11 @@
 use std::fmt::Display;
 
-use binrw::{binrw, Endian};
+use binrw::{Endian, binrw};
 use serde::{Deserialize, Serialize};
 
-use super::{duration::Duration, Timestamp};
+use crate::types::ReliabilityKind;
+
+use super::{Timestamp, duration::Duration};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 #[binrw]
@@ -49,6 +51,17 @@ impl ReliabilityQosPolicy {
 impl Default for ReliabilityQosPolicy {
     fn default() -> Self {
         Self::BestEffort
+    }
+}
+
+impl From<ReliabilityQosPolicy> for ReliabilityKind {
+    fn from(value: ReliabilityQosPolicy) -> Self {
+        match value {
+            ReliabilityQosPolicy::Reliable {
+                max_blocking_time: _,
+            } => ReliabilityKind::Reliable,
+            ReliabilityQosPolicy::BestEffort => ReliabilityKind::BestEffort,
+        }
     }
 }
 

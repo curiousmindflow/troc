@@ -20,14 +20,13 @@ use std::{
 };
 
 use async_trait::async_trait;
-use protocol::{
-    error::Error,
-    messages::{Message, SubmessageContent},
-    types::{Guid, Locator, LocatorList, SequenceNumber, submessage_kind::SubmessageKind},
-};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::{net::UdpSocket, sync::Mutex, time::sleep};
 use tokio_util::codec::{Decoder, Encoder};
+use troc_core::{
+    messages::{Message, SubmessageContent},
+    types::{Guid, Locator, LocatorList, SequenceNumber, submessage_kind::SubmessageKind},
+};
 
 use crate::domain::UdpHelper;
 

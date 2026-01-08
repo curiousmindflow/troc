@@ -12,20 +12,19 @@ use std::{
 };
 
 use async_trait::async_trait;
-use protocol::{
-    error::Error,
-    messages::Message,
-    types::{Locator, LocatorList},
-};
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::codec::{Decoder, Encoder};
+use troc_core::{
+    messages::Message,
+    types::{Locator, LocatorList},
+};
 
 use crate::domain::UdpHelper;
 
 use super::{TransmissionKind, Wired};
 
-pub(crate) struct Wire(Box<dyn Wired>);
+pub struct Wire(Box<dyn Wired>);
 
 impl Wire {
     pub fn new(wired: Box<dyn Wired>) -> Self {

@@ -1,11 +1,11 @@
-use protocol::{
+use troc_core::{
     ReaderProxy, WriterProxy,
     types::{EntityId, GuidPrefix, ParticipantProxy},
 };
 
 mod disc;
 
-pub use disc::EndpointLifecycleCommand;
+pub use disc::DiscoveryActor;
 
 #[derive(Debug)]
 pub enum DiscoveryEvent {

@@ -1,13 +1,11 @@
 mod datawriter;
 mod publisher;
-mod writer_adapter;
 
-pub use datawriter::{DataWriter, DataWriterProxyCommand};
-pub use publisher::Publisher;
-pub use writer_adapter::*;
+pub use datawriter::{DataWriter, DataWriterActor, DataWriterActorMessage};
+pub use publisher::{Publisher, PublisherActor, PublisherActorCreateObject, PublisherActorMessage};
 
-use protocol::types::DurationKind;
-use protocol::{DdsError, ReaderProxy};
+use troc_core::types::DurationKind;
+use troc_core::{DdsError, ReaderProxy};
 
 #[derive(Debug, Clone)]
 pub enum DataWriterEvent {

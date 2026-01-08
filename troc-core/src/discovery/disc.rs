@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, hash_map::Entry},
+    collections::{HashMap, HashSet},
     time::Duration,
 };
 
@@ -7,23 +7,22 @@ use crate::{
     messages::{Message, Submessage, SubmessageContent},
     types::{
         ChangeKind, ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
-        ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER, ENTITYID_PARTICIPANT,
+        ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER,
         ENTITYID_SEDP_BUILTIN_PUBLICATIONS_ANNOUNCER, ENTITYID_SEDP_BUILTIN_PUBLICATIONS_DETECTOR,
         ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER,
         ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR, ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER,
         ENTITYID_SPDP_BUILTIN_PARTICIPANT_DETECTOR, EntityId, Guid, GuidPrefix, InlineQos,
         InstanceHandle, ParticipantProxy, PdpDiscoveredParticipantData, ReliabilityKind,
-        SerializedData, Timestamp, participant_builtin_topic_data::ParticipantBuiltinTopicData,
+        SerializedData, participant_builtin_topic_data::ParticipantBuiltinTopicData,
     },
 };
 use binrw::Endian;
-use chrono::Utc;
 use tracing::{Level, event};
 
 use crate::{
-    CacheChange, IncommingMessage, OutcommingMessage, Reader, ReaderBuilder, ReaderConfiguration,
-    ReaderProxy, Writer, WriterBuilder, WriterConfiguration, WriterProxy,
-    common::{CacheChangeContainer, Effect, Effects, Error, QosPolicyConsistencyChecker},
+    Reader, ReaderBuilder, ReaderConfiguration, ReaderProxy, Writer, WriterBuilder,
+    WriterConfiguration, WriterProxy,
+    common::{Effect, Effects, Error, QosPolicyConsistencyChecker},
     discovery::{
         discovered_reader_data::DiscoveredReaderData, discovered_writer_data::DiscoveredWriterData,
     },

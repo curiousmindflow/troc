@@ -5,10 +5,7 @@ use std::{
 };
 
 use bytes::BytesMut;
-use protocol::{
-    Discovery as ProtocolDiscovery, DiscoveryBuilder, DiscoveryConfiguration, IncommingMessage,
-    OutcommingMessage, ReaderProxy, WriterProxy,
-};
+use kameo::{Actor, prelude::Message};
 use tokio::{
     runtime::Handle,
     select,
@@ -17,80 +14,96 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, event};
-
-use protocol::{
-    messages::Message,
-    types::{EntityId, InlineQos, ParticipantProxy},
+use troc_core::{
+    DdsError, Discovery as ProtocolDiscovery, DiscoveryBuilder, DiscoveryConfiguration,
+    IncommingMessage, OutcommingMessage, ReaderProxy, WriterProxy,
 };
 
-use crate::{
-    common::EmissionInfosStorage,
-    discovery::DiscoveryEvent,
-    publication::{
-        DataWriterProxyCommand, NackedDataScheduleAdapterBuilder,
-        NackedDataScheduleReceiverAdapter, NackedSchedule,
-    },
-    subscription::{
-        AckSchedule, AckScheduleAdapterBuilder, AckScheduleReceiverAdapter,
-        ChangeAvailabilityAdapter, DataReaderProxyCommand,
-    },
-    wires::Wire,
-};
+use troc_core::types::{EntityId, InlineQos, ParticipantProxy};
+
+use crate::discovery::DiscoveryEvent;
 
 #[derive(Debug)]
 pub enum EndpointLifecycleCommand {
     WriterCreated {
         writer_proxy: WriterProxy,
         inline_qos: InlineQos,
-        command_sender: Sender<DataWriterProxyCommand>,
+        command_sender: Sender<()>,
     },
     ReaderCreated {
         reader_proxy: ReaderProxy,
         inline_qos: InlineQos,
-        command_sender: Sender<DataReaderProxyCommand>,
+        command_sender: Sender<()>,
     },
 }
 
+#[derive(Debug)]
+pub enum DiscoveryActorMessage {}
+
+impl Message<DiscoveryActorMessage> for DiscoveryActor {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: DiscoveryActorMessage,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        todo!()
+    }
+}
+
 #[derive()]
-pub struct Discovery {
+pub struct DiscoveryActor {
     disc: Arc<Mutex<ProtocolDiscovery>>,
     cancellation_token: CancellationToken,
 }
 
-impl Discovery {
-    fn new(
+impl Actor for DiscoveryActor {
+    type Args = Self;
+
+    type Error = DdsError;
+
+    async fn on_start(
+        args: Self::Args,
+        actor_ref: kameo::prelude::ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        todo!()
+    }
+}
+
+impl DiscoveryActor {
+    pub fn new() -> Self {
+        todo!()
+    }
+
+    fn new_args(
         participant_infos: ParticipantProxy,
         participant_infos_receiver: Receiver<ParticipantProxy>,
         endpoint_lifecycle_receiver: Receiver<EndpointLifecycleCommand>,
     ) -> Self {
-        let disc = DiscoveryBuilder::new(participant_infos, DiscoveryConfiguration::new()).build();
-        let disc = Arc::new(Mutex::new(disc));
-        let cancellation_token = CancellationToken::new();
+        // let disc = DiscoveryBuilder::new(participant_infos, DiscoveryConfiguration::new()).build();
+        // let disc = Arc::new(Mutex::new(disc));
+        // let cancellation_token = CancellationToken::new();
 
-        let myself = Self {
-            disc,
-            cancellation_token,
-        };
+        // let myself = Self {
+        //     disc,
+        //     cancellation_token,
+        // };
 
-        let applicative_writer_index =
-            HashMap::<EntityId, Sender<DataWriterProxyCommand>>::default();
-        // TODO: same for the Readers
+        // let applicative_writer_index =
+        //     HashMap::<EntityId, Sender<DataWriterProxyCommand>>::default();
+        // // TODO: same for the Readers
 
-        myself.launch(
-            applicative_writer_index,
-            participant_infos_receiver,
-            endpoint_lifecycle_receiver,
-        );
+        // myself.launch(
+        //     applicative_writer_index,
+        //     participant_infos_receiver,
+        //     endpoint_lifecycle_receiver,
+        // );
 
-        // TODO: launch input tasks
+        // // TODO: launch input tasks
 
-        myself
-    }
-
-    fn discovery_actor() {
-        tokio::spawn(async move {
-            //
-        });
+        // myself
+        todo!()
     }
 
     // fn launch(

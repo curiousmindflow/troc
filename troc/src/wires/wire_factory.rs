@@ -1,26 +1,66 @@
+use super::{Wire, WireError, WireList, udpv4_wire::UdpV4Wire};
+use crate::{domain::Configuration, domain::UdpHelper};
+use bytes::BytesMut;
+use kameo::{Actor, Reply, actor::ActorRef, prelude::Message};
+use local_ip_address::local_ip;
 use std::{
-    collections::BTreeSet,
-    default,
     io::ErrorKind,
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
     sync::Arc,
 };
+use troc_core::types::{Locator, LocatorKind, LocatorList};
 
-use local_ip_address::local_ip;
-use protocol::types::{Locator, LocatorKind, LocatorList};
+pub type WireFactoryResult = Result<Vec<ActorRef<WireActor>>, WireError>;
 
-use crate::{domain::Configuration, domain::UdpHelper};
+#[derive(Debug)]
+pub enum WireFactoryActorMessage {
+    CreateOutputWiresFromLocators { locators: Vec<Locator> },
+    CreateLocalhostInputWires,
+    CreateInputWires,
+    CreateInputWiresFromLocators { locators: Vec<Locator> },
+}
 
-use super::{Wire, WireError, WireList, udpv4_wire::UdpV4Wire};
+impl Message<WireFactoryActorMessage> for WireFactoryActor {
+    type Reply = WireFactoryResult;
+
+    async fn handle(
+        &mut self,
+        msg: WireFactoryActorMessage,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        match msg {
+            WireFactoryActorMessage::CreateOutputWiresFromLocators { locators } => todo!(),
+            WireFactoryActorMessage::CreateLocalhostInputWires => {
+                let localhost_locator: Locator = "127.0.0.1".parse().unwrap();
+                todo!()
+            }
+            WireFactoryActorMessage::CreateInputWires => todo!(),
+            WireFactoryActorMessage::CreateInputWiresFromLocators { locators } => todo!(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
-pub struct WireFactory {
+pub struct WireFactoryActor {
     domain_id: Arc<u32>,
     config: Arc<Configuration>,
 }
 
-impl WireFactory {
+impl Actor for WireFactoryActor {
+    type Args = Self;
+
+    type Error = WireError;
+
+    async fn on_start(
+        args: Self::Args,
+        actor_ref: kameo::prelude::ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        todo!()
+    }
+}
+
+impl WireFactoryActor {
     pub fn new(domain_id: u32, config: Configuration) -> Self {
         let domain_id = Arc::new(domain_id);
         let config = Arc::new(config);
@@ -202,5 +242,44 @@ impl WireFactory {
             + global_conf.domain_gain * *self.domain_id
             + global_conf.d3
             + global_conf.participant_gain
+    }
+}
+
+#[derive(Debug, Reply)]
+pub enum WireActorReply {}
+
+#[derive(Debug)]
+pub enum WireActorMessage {
+    Send(BytesMut),
+    Receive,
+}
+
+impl Message<WireActorMessage> for WireActor {
+    type Reply = WireActorReply;
+
+    async fn handle(
+        &mut self,
+        msg: WireActorMessage,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        todo!()
+    }
+}
+
+#[derive(Debug)]
+pub struct WireActor {
+    //
+}
+
+impl Actor for WireActor {
+    type Args = Self;
+
+    type Error = WireError;
+
+    async fn on_start(
+        args: Self::Args,
+        actor_ref: kameo::prelude::ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        todo!()
     }
 }

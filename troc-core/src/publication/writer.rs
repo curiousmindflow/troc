@@ -95,7 +95,7 @@ impl WriterBuilder {
     }
 }
 
-#[derive()]
+#[derive(Debug)]
 pub struct Writer {
     guid: Guid,
     qos: InlineQos,

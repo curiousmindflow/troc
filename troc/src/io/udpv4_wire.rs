@@ -1,4 +1,4 @@
-use common::types::Locator;
+use troc_core::types::Locator;
 
 use crate::io::wire::{TransmissionKind, Wire};
 

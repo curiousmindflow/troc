@@ -1,27 +1,35 @@
-use std::sync::{Arc, Mutex};
-
-use troc_key::Keyed;
-use protocol::DdsError;
-use protocol::types::{EntityId, Guid, GuidPrefix, LocatorList, TopicKind};
+use kameo::Actor;
+use kameo::actor::ActorRef;
+use kameo::actor::Spawn;
+use kameo::prelude::Message;
 use serde::Serialize;
-use tokio::sync::mpsc::Sender;
+use troc_core::DdsError;
+use troc_core::Keyed;
+use troc_core::WriterBuilder;
+use troc_core::WriterConfiguration;
+use troc_core::WriterProxy;
+use troc_core::types::EntityKey;
+use troc_core::types::{EntityId, Guid, GuidPrefix, LocatorList, TopicKind};
 
+use crate::domain::ENTITY_IDENTIFIER_ACTOR_NAME;
+use crate::domain::EntityIdentifierActorAskMessage;
+use crate::domain::WIRE_FACTORY_ACTOR_NAME;
+use crate::publication::DataWriterActor;
+use crate::publication::datawriter::DataWriterActorCreateObject;
+use crate::wires::WireFactoryActor;
+use crate::wires::WireFactoryActorMessage;
 use crate::{
-    discovery::EndpointLifecycleCommand,
-    domain::{Configuration, EntityIdentifier},
+    domain::{Configuration, EntityIdentifierActor},
     infrastructure::QosPolicy,
-    publication::{DataWriter, DataWriterProxyCommand},
+    publication::DataWriter,
     topic::Topic,
-    wires::WireFactory,
 };
 
 #[derive(Clone)]
 pub struct Publisher {
     guid: Guid,
     qos: QosPolicy,
-    wire_factory: WireFactory,
-    endpoint_lifecycle_sender: Sender<EndpointLifecycleCommand>,
-    writer_entity_identifier: Arc<Mutex<EntityIdentifier>>,
+    publisher_actor: ActorRef<PublisherActor>,
 }
 
 impl Publisher {
@@ -29,13 +37,15 @@ impl Publisher {
         guid: Guid,
         default_unicast_locator_list: LocatorList,
         default_multicast_locator_list: LocatorList,
-        endpoint_lifecycle_sender: Sender<EndpointLifecycleCommand>,
-        writer_entity_identifier: Arc<Mutex<EntityIdentifier>>,
         qos: QosPolicy,
-        wire_factory: WireFactory,
         config: Configuration,
+        publisher_actor: ActorRef<PublisherActor>,
     ) -> Self {
-        unimplemented!()
+        Self {
+            guid,
+            qos,
+            publisher_actor,
+        }
     }
 
     pub fn get_guid_prefix(&self) -> GuidPrefix {
@@ -54,7 +64,16 @@ impl Publisher {
     where
         T: Serialize + Keyed + 'static,
     {
-        let writer_key = self.writer_entity_identifier.lock().unwrap().get_new_key();
+        let entity_identifier_actore =
+            ActorRef::<EntityIdentifierActor>::lookup(ENTITY_IDENTIFIER_ACTOR_NAME)
+                .unwrap()
+                .unwrap();
+        let writer_key: EntityKey = entity_identifier_actore
+            .ask(EntityIdentifierActorAskMessage::AskWriterId)
+            .await
+            .unwrap()
+            .into();
+
         let writer_id = if matches!(topic.topic_kind, TopicKind::WithKey) {
             EntityId::writer_with_key(writer_key.0)
         } else {
@@ -62,27 +81,90 @@ impl Publisher {
         };
         let writer_guid = Guid::new(self.guid.get_guid_prefix(), writer_id);
 
-        let datawriter =
-            DataWriter::new(writer_guid, *qos, self.endpoint_lifecycle_sender.clone()).await;
+        let reliable = qos.reliability().into();
 
-        let localhost_wire = self
-            .wire_factory
-            .build_user_wire(Some("127.0.0.1".parse().unwrap()))
+        let config = WriterConfiguration::default();
+        let writer = WriterBuilder::new(writer_guid, (*qos).into(), config)
+            .reliable(reliable)
+            .build();
+        let writer_proxy = writer.extract_proxy();
+
+        let wire_factory = ActorRef::<WireFactoryActor>::lookup(WIRE_FACTORY_ACTOR_NAME)
+            .unwrap()
             .unwrap();
-        let unicast_wire = self.wire_factory.build_user_wire(None).unwrap();
 
-        datawriter.incomming_task(localhost_wire);
-        datawriter.incomming_task(unicast_wire);
+        let mut input_wires = Vec::default();
 
-        // let old = self
-        //     .inner
-        //     .lock()
-        //     .await
-        //     .writers
-        //     .insert(writer.get_guid().get_entity_id(), writer.duplicate());
+        let localhost_wires = wire_factory
+            .ask(WireFactoryActorMessage::CreateLocalhostInputWires)
+            .await
+            .unwrap();
+        input_wires.extend(localhost_wires);
+        let machine_wires = wire_factory
+            .ask(WireFactoryActorMessage::CreateInputWires)
+            .await
+            .unwrap();
+        input_wires.extend(machine_wires);
 
-        // assert!(old.is_none());
+        let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject {
+            writer,
+            input_wires,
+        });
+
+        let datawriter = DataWriter::new(writer_guid, *qos, writer_actor.clone()).await;
+
+        self.publisher_actor
+            .ask(PublisherActorMessage {
+                proxy: writer_proxy,
+                writer: writer_actor,
+            })
+            .await
+            .unwrap();
 
         Ok(datawriter)
+    }
+}
+
+#[derive(Debug)]
+pub struct PublisherActorMessage {
+    proxy: WriterProxy,
+    writer: ActorRef<DataWriterActor>,
+}
+
+impl Message<PublisherActorMessage> for PublisherActor {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: PublisherActorMessage,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.writers.push(msg.writer);
+        // TODO: send info to Discovery
+    }
+}
+
+#[derive(Debug)]
+pub struct PublisherActorCreateObject {}
+
+#[derive(Debug)]
+pub struct PublisherActor {
+    writers: Vec<ActorRef<DataWriterActor>>,
+}
+
+impl Actor for PublisherActor {
+    type Args = PublisherActorCreateObject;
+
+    type Error = DdsError;
+
+    async fn on_start(
+        _args: Self::Args,
+        _actor_ref: kameo::prelude::ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        let publisher_actor = Self {
+            writers: Default::default(),
+        };
+
+        Ok(publisher_actor)
     }
 }

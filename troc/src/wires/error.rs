@@ -1,5 +1,5 @@
-use protocol::types::{Guid, SequenceNumber};
 use thiserror::Error;
+use troc_core::types::{Guid, SequenceNumber};
 
 #[derive(Debug, Error, Default)]
 pub enum WireError {

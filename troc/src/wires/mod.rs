@@ -6,28 +6,31 @@ mod wire_factory;
 use async_trait::async_trait;
 use bytes::BytesMut;
 pub use error::WireError;
-use protocol::{messages::Message, types::Locator};
+use troc_core::types::Locator;
 pub use wire::*;
-pub use wire_factory::WireFactory;
+pub use wire_factory::{
+    WireActor, WireActorMessage, WireActorReply, WireFactoryActor, WireFactoryActorMessage,
+    WireFactoryResult,
+};
 
 // #[cfg(test)]
 // use mockall::*;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum TransmissionKind {
+pub enum TransmissionKind {
     ToOne,
     ToMany,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum TransmissionDirection {
+pub enum TransmissionDirection {
     Listener,
     Sender,
 }
 
 // #[cfg_attr(test, automock)]
 #[async_trait]
-pub(crate) trait Wired: Send + Sync {
+pub trait Wired: Send + Sync {
     async fn recv(&mut self) -> Result<BytesMut, WireError>;
     async fn send(&mut self, msg: BytesMut) -> Result<(), WireError>;
     fn transmission_kind(&self) -> TransmissionKind;
