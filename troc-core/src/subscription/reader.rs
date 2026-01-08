@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
+    ReaderProxy,
     messages::{
         GapGroupInfo, HeartbeatGroupInfo, Message, MessageFactory, MessageReceiver,
         SubmessageContent,
@@ -831,6 +832,13 @@ impl Reader {
         }
 
         Ok(())
+    }
+
+    pub fn extract_proxy(&self) -> ReaderProxy {
+        ReaderProxy {
+            remote_reader_guid: self.get_guid(),
+            ..Default::default()
+        }
     }
 }
 

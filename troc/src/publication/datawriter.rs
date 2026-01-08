@@ -2,6 +2,7 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use crate::{
     discovery::DiscoveryActor,
+    domain::{DISCOVERY_ACTOR_NAME, TIMER_ACTOR_NAME},
     infrastructure::QosPolicy,
     publication::DataWriterListener,
     time::{TimerActor, TimerActorMessage},
@@ -201,7 +202,6 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                         })
                         .await
                         .unwrap();
-                    todo!()
                 }
                 Effect::Qos => todo!(),
                 _ => unreachable!(),
@@ -240,11 +240,13 @@ impl Actor for DataWriterActor {
             input_wires,
         } = args;
 
-        let discovery = ActorRef::<DiscoveryActor>::lookup("discovery")
+        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
             .unwrap()
             .unwrap();
 
-        let timer = ActorRef::<TimerActor>::lookup("timer").unwrap().unwrap();
+        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
+            .unwrap()
+            .unwrap();
 
         let datawriter_actor = Self {
             writer,

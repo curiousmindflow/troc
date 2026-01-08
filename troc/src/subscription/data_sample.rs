@@ -1,5 +1,3 @@
-use troc_key::PlugableMessage;
-
 use super::sample_info::SampleInfo;
 
 #[derive(Debug)]
@@ -27,15 +25,6 @@ impl<T> DataSample<T> {
 
     pub fn infos(&self) -> SampleInfo {
         self.infos
-    }
-}
-
-impl DataSample<Box<dyn PlugableMessage>> {
-    pub fn from_plugeable_message(plugin: Box<dyn PlugableMessage>) -> Self {
-        Self {
-            data: Some(plugin),
-            ..Default::default()
-        }
     }
 }
 

@@ -2,19 +2,21 @@ mod condition;
 mod data_sample;
 mod datareader;
 mod instance_state_kind;
-mod reader_adapters;
 mod sample_info;
 mod sample_state_kind;
 mod subscriber;
 mod view_state_kind;
 
 pub use data_sample::DataSample;
-pub use datareader::{DataReader, DataReaderProxyCommand};
-pub use reader_adapters::*;
-pub use subscriber::Subscriber;
+pub use datareader::{
+    DataReader, DataReaderActor, DataReaderActorCreateObject, DataReaderActorMessage,
+};
+pub use subscriber::{
+    Subscriber, SubscriberActor, SubscriberActorCreateObject, SubscriberActorMessage,
+};
 
-use protocol::types::DurationKind;
-use protocol::{DdsError, WriterProxy};
+use troc_core::types::DurationKind;
+use troc_core::{DdsError, WriterProxy};
 
 #[derive(Debug, Clone)]
 pub enum DataReaderEvent {

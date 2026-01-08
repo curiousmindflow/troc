@@ -5,7 +5,7 @@ use troc_core::{
 
 mod disc;
 
-pub use disc::DiscoveryActor;
+pub use disc::{DiscoveryActor, DiscoveryActorCreateObject, DiscoveryActorMessage};
 
 #[derive(Debug)]
 pub enum DiscoveryEvent {

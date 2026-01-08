@@ -2,7 +2,6 @@ use kameo::Actor;
 use kameo::actor::{ActorRef, Spawn};
 use kameo::prelude::Message;
 use tracing::{Level, event};
-use troc_core::DdsError;
 use troc_core::types::builtin_endpoint_qos::BuiltinEndpointQos;
 use troc_core::types::domain_id::DomainId;
 use troc_core::types::{DomainTag, EntityId, EntityKey};
@@ -10,12 +9,14 @@ use troc_core::types::{
     ENTITYID_PARTICIPANT, Guid, LocatorList, ParticipantProxy, TopicKind, VENDORID_UNKNOWN,
     builtin_endpoint_set::BuiltinEndpointSet,
 };
+use troc_core::{DdsError, Discovery, DiscoveryBuilder, DiscoveryConfiguration};
 
-use crate::discovery::DiscoveryActor;
+use crate::discovery::{DiscoveryActor, DiscoveryActorCreateObject, DiscoveryActorMessage};
 use crate::domain::{
     DISCOVERY_ACTOR_NAME, ENTITY_IDENTIFIER_ACTOR_NAME, TIMER_ACTOR_NAME, WIRE_FACTORY_ACTOR_NAME,
 };
 use crate::publication::{Publisher, PublisherActor, PublisherActorCreateObject};
+use crate::subscription::{Subscriber, SubscriberActor, SubscriberActorCreateObject};
 use crate::time::TimerActor;
 use crate::wires::WireFactoryActor;
 use crate::{
@@ -59,117 +60,6 @@ impl DomainParticipantBuilder {
         self
     }
 
-    // async fn new(domain_id: u32, config: Configuration, name: &str, listener: bool) -> Self {
-    //     // TODO: choose a vendorid for troc_core
-    //     let guid = Guid::generate(VENDORID_UNKNOWN, ENTITYID_PARTICIPANT);
-    //     let wire_factory = WireFactory::new(domain_id, config.clone());
-
-    //     // let span = Span::current();
-    //     // span.record("guid_prefix", guid.get_guid_prefix().to_string());
-
-    //     let (listener, listener_receiver) = if listener {
-    //         let (sender, receiver) = tokio::sync::broadcast::channel(16);
-    //         (
-    //             DomainParticipantListenerHandle::new(16, Some(sender)),
-    //             Some(receiver),
-    //         )
-    //     } else {
-    //         (DomainParticipantListenerHandle::new(0, None), None)
-    //     };
-
-    //     let (participant_infos_sender, participant_infos_receiver) = channel(64);
-
-    //     let spdp_writer_wire_list = wire_factory
-    //         .build_discovery_sender_multicast_wire()
-    //         .unwrap();
-    //     let spdp_writer_wire_list = WireList::new(vec![spdp_writer_wire_list]);
-
-    //     let spdp_reader_wire_list = wire_factory
-    //         .build_discovery_listener_multicast_wire()
-    //         .unwrap();
-    //     let spdp_reader_wire_list = WireList::new(vec![spdp_reader_wire_list]);
-
-    //     let sedp_unicast_wire_0 = wire_factory.build_discovery_unicast_wire().unwrap();
-    //     let sedp_unicast_wire_1 = wire_factory.build_discovery_unicast_wire().unwrap();
-    //     let sedp_unicast_wire_2 = wire_factory.build_discovery_unicast_wire().unwrap();
-    //     let sedp_unicast_wire_3 = wire_factory.build_discovery_unicast_wire().unwrap();
-    //     let sedp_unicast_wire_list = WireList::new(vec![
-    //         sedp_unicast_wire_0,
-    //         sedp_unicast_wire_1,
-    //         sedp_unicast_wire_2,
-    //         sedp_unicast_wire_3,
-    //     ]);
-    //     // let sedp_multicast_wire_list = wire_factory
-    //     //     .build_discovery_listener_multicast_wire()
-    //     //     .unwrap();
-    //     // let sedp_multicast_wire_list = WireList::new(vec![sedp_multicast_wire_list]);
-    //     let sedp_multicast_wire_list = WireList::default();
-
-    //     let metatraffic_unicast_locator_list = sedp_unicast_wire_list.extract_locators();
-    //     // let metatraffic_multicast_locator_list = spdp_reader_wire_list.extract_locators();
-    //     let metatraffic_multicast_locator_list = LocatorList::default();
-
-    //     let mut endpoint_set = BuiltinEndpointSet::new();
-    //     endpoint_set.set_disc_builtin_endpoint_participant_announcer(1);
-    //     endpoint_set.set_disc_builtin_endpoint_participant_detector(1);
-    //     // FIXME: when troc node contains only a Reader and rustdds/dustdds contains a writer, if those lines are commented out, the communication doesn't works
-    //     endpoint_set.set_disc_builtin_endpoint_publications_announcer(1);
-    //     endpoint_set.set_disc_builtin_endpoint_publications_detector(1);
-    //     endpoint_set.set_disc_builtin_endpoint_subscriptions_announcer(1);
-    //     endpoint_set.set_disc_builtin_endpoint_subscriptions_detector(1);
-    //     endpoint_set.set_builtin_endpoint_participant_message_data_reader(1);
-    //     endpoint_set.set_builtin_endpoint_participant_message_data_writer(1);
-    //     //
-
-    //     let inner = DomainParticipantInner::new(
-    //         guid,
-    //         metatraffic_unicast_locator_list,
-    //         metatraffic_multicast_locator_list,
-    //         LocatorList::default(),
-    //         LocatorList::default(),
-    //         endpoint_set,
-    //         BuiltinEndpointQos::default(),
-    //         disc_cmd_sender,
-    //         discovery_notifier.clone(),
-    //         cancellation_token.clone(),
-    //         listener_receiver,
-    //         config.clone(),
-    //         span.clone(),
-    //     )
-    //     .await;
-
-    //     let discovery_handler = DiscoveryHandler::new(
-    //         guid,
-    //         weak_inner,
-    //         Self::agreement,
-    //         wire_factory.clone(),
-    //         spdp_writer_wire_list,
-    //         spdp_reader_wire_list,
-    //         sedp_unicast_wire_list,
-    //         sedp_multicast_wire_list,
-    //         disc_cmd_receiver,
-    //         listener.clone(),
-    //         config,
-    //         cancellation_token.clone(),
-    //         name,
-    //     )
-    //     .await;
-
-    //     event!(Level::INFO, "Participant created");
-
-    //     Self {
-    //         domain_id,
-    //         guid,
-    //         inner,
-    //         listener,
-    //         discovery_handler,
-    //         wire_factory,
-    //         span,
-    //     }
-
-    //     todo!()
-    // }
-
     pub fn build(self) -> DomainParticipant {
         let DomainParticipantBuilder {
             domain_id,
@@ -212,11 +102,16 @@ impl DomainParticipantBuilder {
             BuiltinEndpointQos::default(),
         );
 
+        let discovery_configuration = DiscoveryConfiguration::new();
+        let discovery =
+            DiscoveryBuilder::new(infos.get_guid_prefix(), discovery_configuration).build();
+
         let actor = DomainParticipantActor::spawn(DomainParticipantActorCreationObject {
             domain_id,
             guid,
             infos,
             configuration: configuration.clone(),
+            discovery,
         });
 
         DomainParticipant {
@@ -329,9 +224,39 @@ impl DomainParticipant {
         Ok(publisher)
     }
 
-    // pub async fn create_subscriber(&mut self, qos: &QosPolicy) -> Result<Subscriber, DdsError> {
-    //     todo!()
-    // }
+    pub async fn create_subscriber(&mut self, qos: &QosPolicy) -> Result<Subscriber, DdsError> {
+        let entity_identifier =
+            ActorRef::<EntityIdentifierActor>::lookup(ENTITY_IDENTIFIER_ACTOR_NAME)
+                .unwrap()
+                .unwrap();
+        let sub_key: EntityKey = entity_identifier
+            .ask(EntityIdentifierActorAskMessage::AskSubscriberId)
+            .await
+            .unwrap()
+            .into();
+        let sub_id = EntityId::writer_group_builtin(sub_key.0);
+        let sub_guid = Guid::new(self.guid.get_guid_prefix(), sub_id);
+
+        let default_unicast_locators = Default::default();
+        let default_multicast_locators = self
+            .configuration
+            .global
+            .default_multicast_locator_list
+            .clone();
+
+        let subscriber_actor = SubscriberActor::spawn(SubscriberActorCreateObject {});
+
+        let subscriber = Subscriber::new(
+            sub_guid,
+            default_unicast_locators,
+            default_multicast_locators,
+            *qos,
+            self.configuration.clone(),
+            subscriber_actor,
+        );
+
+        Ok(subscriber)
+    }
 }
 
 #[derive(Debug)]
@@ -367,6 +292,7 @@ struct DomainParticipantActorCreationObject {
     guid: Guid,
     infos: ParticipantProxy,
     configuration: Configuration,
+    discovery: Discovery,
 }
 
 #[derive(Debug)]
@@ -402,7 +328,9 @@ impl Actor for DomainParticipantActor {
         wire_factory.wait_for_startup().await;
         wire_factory.register(WIRE_FACTORY_ACTOR_NAME).unwrap();
         actor_ref.link(&wire_factory).await;
-        let discovery = DiscoveryActor::spawn(());
+        let discovery = DiscoveryActor::spawn(DiscoveryActorCreateObject {
+            discovery: args.discovery,
+        });
         discovery.wait_for_startup().await;
         discovery.register(DISCOVERY_ACTOR_NAME).unwrap();
         actor_ref.link(&discovery).await;
@@ -412,6 +340,14 @@ impl Actor for DomainParticipantActor {
             .register(ENTITY_IDENTIFIER_ACTOR_NAME)
             .unwrap();
         actor_ref.link(&entity_identifier).await;
+
+        discovery
+            .tell(DiscoveryActorMessage::ParticipantProxyChanged(
+                args.infos.clone(),
+            ))
+            .await
+            .unwrap();
+
         let domain_participant_actor = Self {
             domain_id: args.domain_id,
             guid: args.guid,
@@ -446,61 +382,6 @@ impl Actor for DomainParticipantActor {
         // relaunch dead Actor if they didn't die on purpose
         todo!()
     }
-}
-
-impl DomainParticipantActor {
-    // pub async fn create_subscriber(&mut self, qos: &QosPolicy) -> Result<Subscriber, DdsError> {
-    //     event!(Level::TRACE, "subscriber creation...");
-
-    //     let mut participant_inner_guard = self.lock_inner().await;
-
-    //     let sub_key = participant_inner_guard
-    //         .subscriber_entity_identifier
-    //         .get_new_key();
-
-    //     let sub_id = EntityId::reader_group_builtin(sub_key.0);
-
-    //     let sub_guid = Guid::new(self.guid.get_guid_prefix(), sub_id);
-
-    //     let subscriber = {
-    //         let (default_unicast_locator_list, default_multicast_locator_list) = {
-    //             let infos_guard = participant_inner_guard.infos.lock().await;
-
-    //             let default_unicast_locator_list = infos_guard.get_default_unicast_locator_list();
-    //             let default_multicast_locator_list =
-    //                 infos_guard.get_default_multicast_locator_list();
-
-    //             (default_unicast_locator_list, default_multicast_locator_list)
-    //         };
-
-    //         let participant = self.get_weak();
-    //         let disc_cmd_sender = participant_inner_guard.disc_cmd_sender.clone();
-    //         let reader_entity_identifier = participant_inner_guard.reader_entity_identifier.clone();
-    //         let config = participant_inner_guard.config.clone();
-
-    //         let subscriber = Subscriber::new(
-    //             sub_guid,
-    //             default_unicast_locator_list,
-    //             default_multicast_locator_list,
-    //             participant,
-    //             disc_cmd_sender,
-    //             reader_entity_identifier,
-    //             *qos,
-    //             self.wire_factory.clone(),
-    //             config,
-    //             self.span.clone(),
-    //         );
-
-    //         let old = participant_inner_guard
-    //             .subscribers
-    //             .insert(subscriber.get_entity_id(), subscriber.inner.clone());
-
-    //         assert!(old.is_none());
-
-    //         subscriber
-    //     };
-    //     Ok(subscriber)
-    // }
 }
 
 #[cfg(test)]

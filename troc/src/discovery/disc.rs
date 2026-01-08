@@ -1,18 +1,13 @@
-use std::{collections::HashMap, time::Duration};
-
-use bytes::BytesMut;
 use chrono::Utc;
+use kameo::actor::ActorRef;
 use kameo::{Actor, prelude::Message};
-use tokio::time::{Instant, sleep};
 use tracing::{Level, event};
-use troc_core::{
-    DdsError, Discovery as ProtocolDiscovery, DiscoveryBuilder, DiscoveryConfiguration, Effect,
-    Effects, IncommingMessage, OutcommingMessage, ReaderProxy, WriterProxy,
-};
+use troc_core::{DdsError, Discovery as ProtocolDiscovery, Effects, ReaderProxy, WriterProxy};
 
 use troc_core::types::{EntityId, InlineQos, ParticipantProxy};
 
-use crate::discovery::DiscoveryEvent;
+use crate::domain::TIMER_ACTOR_NAME;
+use crate::time::{TimerActor, TimerActorMessage};
 
 #[derive(Debug)]
 pub enum DiscoveryActorMessage {
@@ -71,19 +66,56 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
         }
 
         while let Some(effect) = self.effects.pop() {
-            //
+            match effect {
+                troc_core::Effect::DataAvailable => todo!(),
+                troc_core::Effect::Message {
+                    timestamp_millis,
+                    message,
+                    locators,
+                } => todo!(),
+                troc_core::Effect::Qos => todo!(),
+                troc_core::Effect::CreateAssociation => todo!(),
+                troc_core::Effect::RemoveAssociation {
+                    participant_guid_prefix,
+                } => todo!(),
+                troc_core::Effect::ReaderMatch {
+                    success,
+                    local_reader_infos,
+                    remote_writer_infos,
+                } => todo!(),
+                troc_core::Effect::WriterMatch {
+                    success,
+                    local_writer_infos,
+                    remote_reader_infos,
+                } => todo!(),
+                troc_core::Effect::ScheduleTick { delay } => {
+                    self.timer
+                        .tell(TimerActorMessage::ScheduleDiscoveryTick {
+                            delay,
+                            target: ctx.actor_ref().clone(),
+                        })
+                        .await
+                        .unwrap();
+                }
+            }
         }
     }
+}
+
+#[derive(Debug)]
+pub struct DiscoveryActorCreateObject {
+    pub discovery: ProtocolDiscovery,
 }
 
 #[derive()]
 pub struct DiscoveryActor {
     discovery: ProtocolDiscovery,
     effects: Effects,
+    timer: ActorRef<TimerActor>,
 }
 
 impl Actor for DiscoveryActor {
-    type Args = ();
+    type Args = DiscoveryActorCreateObject;
 
     type Error = DdsError;
 
@@ -91,7 +123,15 @@ impl Actor for DiscoveryActor {
         args: Self::Args,
         actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        todo!()
+        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
+            .unwrap()
+            .unwrap();
+        let actor = Self {
+            discovery: args.discovery,
+            effects: Effects::default(),
+            timer,
+        };
+        Ok(actor)
     }
 }
 

@@ -57,16 +57,19 @@ impl Default for DiscoveryConfiguration {
     }
 }
 
+#[derive(Debug)]
 struct RemoteParticipantInfos {
     lease_end_time_ms: i64,
     infos: PdpDiscoveredParticipantData,
 }
 
+#[derive(Debug)]
 struct WriterMatchingInfos {
     disc_data: DiscoveredWriterData,
     matches: HashSet<Guid>,
 }
 
+#[derive(Debug)]
 struct ReaderMatchingInfos {
     disc_data: DiscoveredReaderData,
     matches: HashSet<Guid>,
@@ -74,15 +77,15 @@ struct ReaderMatchingInfos {
 
 #[derive()]
 pub struct DiscoveryBuilder {
-    participant_infos: ParticipantProxy,
+    participant_guid_prefix: GuidPrefix,
     config: DiscoveryConfiguration,
     last_announcement_timestamp_ms: Option<i64>,
 }
 
 impl DiscoveryBuilder {
-    pub fn new(participant_infos: ParticipantProxy, config: DiscoveryConfiguration) -> Self {
+    pub fn new(participant_guid_prefix: GuidPrefix, config: DiscoveryConfiguration) -> Self {
         Self {
-            participant_infos,
+            participant_guid_prefix,
             config,
             last_announcement_timestamp_ms: None,
         }
@@ -95,14 +98,14 @@ impl DiscoveryBuilder {
 
     pub fn build(self) -> Discovery {
         let Self {
-            participant_infos,
+            participant_guid_prefix,
             config,
             last_announcement_timestamp_ms,
         } = self;
 
         let pdp_announcer = WriterBuilder::new(
             Guid::new(
-                participant_infos.get_guid_prefix(),
+                participant_guid_prefix,
                 ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER,
             ),
             InlineQos::default(),
@@ -112,7 +115,7 @@ impl DiscoveryBuilder {
 
         let pdp_detector = ReaderBuilder::new(
             Guid::new(
-                participant_infos.get_guid_prefix(),
+                participant_guid_prefix,
                 ENTITYID_SPDP_BUILTIN_PARTICIPANT_DETECTOR,
             ),
             InlineQos::default(),
@@ -122,7 +125,7 @@ impl DiscoveryBuilder {
 
         let edp_pub_announcer = WriterBuilder::new(
             Guid::new(
-                participant_infos.get_guid_prefix(),
+                participant_guid_prefix,
                 ENTITYID_SEDP_BUILTIN_PUBLICATIONS_ANNOUNCER,
             ),
             InlineQos::default(),
@@ -133,7 +136,7 @@ impl DiscoveryBuilder {
 
         let edp_sub_announcer = WriterBuilder::new(
             Guid::new(
-                participant_infos.get_guid_prefix(),
+                participant_guid_prefix,
                 ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER,
             ),
             InlineQos::default(),
@@ -144,7 +147,7 @@ impl DiscoveryBuilder {
 
         let edp_pub_detector = ReaderBuilder::new(
             Guid::new(
-                participant_infos.get_guid_prefix(),
+                participant_guid_prefix,
                 ENTITYID_SEDP_BUILTIN_PUBLICATIONS_DETECTOR,
             ),
             InlineQos::default(),
@@ -155,7 +158,7 @@ impl DiscoveryBuilder {
 
         let edp_sub_detector = ReaderBuilder::new(
             Guid::new(
-                participant_infos.get_guid_prefix(),
+                participant_guid_prefix,
                 ENTITYID_SEDP_BUILTIN_PUBLICATIONS_DETECTOR,
             ),
             InlineQos::default(),
@@ -181,7 +184,7 @@ impl DiscoveryBuilder {
     }
 }
 
-#[derive()]
+#[derive(Debug)]
 pub struct Discovery {
     pdp_announcer: Writer,
     pdp_detector: Reader,
@@ -763,7 +766,7 @@ mod tests {
         #[from(setup_participant_infos_0)] infos: ParticipantProxy,
         #[from(setup_configuration)] config: DiscoveryConfiguration,
     ) -> Discovery {
-        DiscoveryBuilder::new(infos, config)
+        DiscoveryBuilder::new(infos.get_guid_prefix(), config)
             .last_announcement(0)
             .build()
     }

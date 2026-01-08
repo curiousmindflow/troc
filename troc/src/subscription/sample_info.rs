@@ -1,5 +1,5 @@
-use protocol::types::{InstanceHandle, Timestamp};
-use protocol::{CacheChange, CacheChangeInfos};
+use troc_core::types::{InstanceHandle, Timestamp};
+use troc_core::{CacheChange, CacheChangeInfos};
 
 use crate::subscription::sample_state_kind::SampleStateKind;
 

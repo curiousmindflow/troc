@@ -3,13 +3,25 @@ use std::time::Duration;
 use kameo::{Actor, actor::ActorRef, error::Infallible, prelude::Message};
 use tokio::time::sleep;
 
-use crate::publication::{DataWriterActor, DataWriterActorMessage};
+use crate::{
+    discovery::{DiscoveryActor, DiscoveryActorMessage},
+    publication::{DataWriterActor, DataWriterActorMessage},
+    subscription::{DataReaderActor, DataReaderActorMessage},
+};
 
 #[derive()]
 pub enum TimerActorMessage {
     ScheduleWriterTick {
         delay: i64,
         target: ActorRef<DataWriterActor>,
+    },
+    ScheduleReaderTick {
+        delay: i64,
+        target: ActorRef<DataReaderActor>,
+    },
+    ScheduleDiscoveryTick {
+        delay: i64,
+        target: ActorRef<DiscoveryActor>,
     },
 }
 
@@ -26,6 +38,18 @@ impl Message<TimerActorMessage> for TimerActor {
                 tokio::spawn(async move {
                     sleep(Duration::from_millis(delay as u64));
                     target.tell(DataWriterActorMessage::Tick).await.unwrap()
+                });
+            }
+            TimerActorMessage::ScheduleReaderTick { delay, target } => {
+                tokio::spawn(async move {
+                    sleep(Duration::from_millis(delay as u64));
+                    target.tell(DataReaderActorMessage::Tick).await.unwrap()
+                });
+            }
+            TimerActorMessage::ScheduleDiscoveryTick { delay, target } => {
+                tokio::spawn(async move {
+                    sleep(Duration::from_millis(delay as u64));
+                    target.tell(DiscoveryActorMessage::Tick).await.unwrap()
                 });
             }
         }
