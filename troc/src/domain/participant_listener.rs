@@ -1,6 +1,6 @@
 use tokio::sync::broadcast::{Receiver, Sender};
-use troc_core::types::{DurationKind, ParticipantProxy};
 use troc_core::{DdsError, DiscoveredReaderData, DiscoveredWriterData};
+use troc_core::{DurationKind, ParticipantProxy};
 
 #[derive(Debug, Clone)]
 pub enum ParticipantEvent {

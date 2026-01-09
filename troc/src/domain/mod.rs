@@ -8,11 +8,11 @@ pub use configuration::{
     Configuration, DiscoveryConfiguration, GlobalConfiguration, ReaderConfiguration,
     WriterConfiguration,
 };
-// pub use participant::DomainParticipant;
 pub use entity_identifier::{
     AskedId, EntityIdentifierActor, EntityIdentifierActorAskMessage,
     EntityIdentifierActorFreeMessage,
 };
+pub use participant::{DomainParticipant, DomainParticipantBuilder};
 pub use participant_listener::{
     DomainParticipantListener, DomainParticipantListenerHandle, ParticipantEvent,
 };

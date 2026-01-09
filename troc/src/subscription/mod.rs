@@ -15,7 +15,7 @@ pub use subscriber::{
     Subscriber, SubscriberActor, SubscriberActorCreateObject, SubscriberActorMessage,
 };
 
-use troc_core::types::DurationKind;
+use troc_core::DurationKind;
 use troc_core::{DdsError, WriterProxy};
 
 #[derive(Debug, Clone)]

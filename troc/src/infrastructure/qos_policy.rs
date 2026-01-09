@@ -1,4 +1,4 @@
-use troc_core::types::{
+use troc_core::{
     DeadlineQosPolicy, DurabilityQosPolicy, HistoryQosPolicy, InlineQos, LifespanQosPolicy,
     LivelinessQosPolicy, ParameterId, ReliabilityQosPolicy,
 };

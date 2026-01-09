@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use troc_core::types::{locator::Locator, locator_kind::LocatorKind};
+use troc_core::{locator::Locator, locator_kind::LocatorKind};
 
 pub struct UdpHelper {}
 

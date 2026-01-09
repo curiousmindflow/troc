@@ -13,12 +13,14 @@ use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Serialize;
 
 use tracing::{Level, event};
-use troc_core::{DdsError, Effect, ReaderProxy, Writer};
-use troc_core::{Effects, Keyed};
 use troc_core::{
-    serialize_data,
-    types::{ChangeKind, Guid, InlineQos, InstanceHandle, Locator, SequenceNumber, SerializedData},
+    ChangeKind, Guid, InlineQos, InstanceHandle, Locator, SequenceNumber, SerializedData, cdr,
 };
+use troc_core::{
+    DdsError, Effect, ReaderProxy, Writer,
+    cdr::{CdrLe, Infinite},
+};
+use troc_core::{Effects, Keyed};
 
 #[derive(Debug)]
 pub struct DataWriter<T> {
@@ -55,7 +57,8 @@ impl<T> DataWriter<T> {
         T: Serialize + Keyed,
     {
         let key = data.key().unwrap();
-        let data = serialize_data(&data).unwrap();
+        let data = cdr::serialize::<_, _, CdrLe>(&data, Infinite).unwrap();
+        let data = SerializedData::from_vec(data);
         self.write_raw(data, InstanceHandle(key)).await
     }
 
@@ -79,44 +82,6 @@ impl<T> DataWriter<T> {
     pub async fn remove_sample(&self, sequence: SequenceNumber) {
         unimplemented!()
     }
-
-    // pub fn incomming_task(&self, mut wire: Wire) {
-    //     let writer = self.writer.clone();
-    //     let cancellation_token = self.cancellation_token.child_token();
-    //     tokio::spawn(async move {
-    //         loop {
-    //             select! {
-    //                     _ = cancellation_token.cancelled() => {
-    //                         break
-    //                     }
-    //                     Ok(buffer) = wire.recv() => {
-    //                         let Ok(deserialization_result) = Handle::current()
-    //                             .spawn_blocking(move || Message::deserialize_from(&buffer))
-    //                             .await
-    //                         else {
-    //                             event!(Level::ERROR, "Spawn blocking failed");
-    //                             break;
-    //                         };
-    //                         match deserialization_result {
-    //                             Ok(message) => {
-    //                                 let message = IncommingMessage::new(message);
-    //                                 if let Err(e) = writer.lock().unwrap().ingest(message) {
-    //                                     event!(Level::ERROR, "{e}");
-    //                                 }
-    //                             }
-    //                             Err(e) => {
-    //                                 event!(Level::ERROR, "{e}");
-    //                             }
-    //                         }
-    //                     }
-    //                     else => {
-    //                         event!(Level::ERROR, "Incomming task terminate");
-    //                         break;
-    //                     }
-    //             }
-    //         }
-    //     });
-    // }
 }
 
 #[derive(Debug)]
@@ -125,8 +90,11 @@ pub enum DataWriterActorMessage {
         data: SerializedData,
         instance: InstanceHandle,
     },
-    Message {
-        message: troc_core::messages::Message,
+    IncomingMessage {
+        message: BytesMut,
+    },
+    OutcomingMessage {
+        message: troc_core::Message,
     },
     AddProxy {
         proxy: ReaderProxy,
@@ -154,7 +122,11 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                     .new_change(ChangeKind::Alive, Some(data), None, instance);
                 self.writer.add_change(&mut self.effects, change).unwrap();
             }
-            DataWriterActorMessage::Message { message } => {
+            DataWriterActorMessage::IncomingMessage { message } => {
+                //
+                todo!()
+            }
+            DataWriterActorMessage::OutcomingMessage { message } => {
                 self.writer.ingest(&mut self.effects, message).unwrap()
             }
             DataWriterActorMessage::AddProxy { proxy, wires } => {
@@ -276,7 +248,7 @@ mod tests {
 
     use rstest::*;
     use tokio::sync::mpsc::channel;
-    use troc_core::types::{Guid, Locator};
+    use troc_core::{Guid, Locator};
 
     use crate::{
         domain::Configuration, infrastructure::QosPolicy, publication::datawriter::DataWriter,

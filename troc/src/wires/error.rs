@@ -1,5 +1,5 @@
 use thiserror::Error;
-use troc_core::types::{Guid, SequenceNumber};
+use troc_core::{Guid, SequenceNumber};
 
 #[derive(Debug, Error, Default)]
 pub enum WireError {

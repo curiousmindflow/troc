@@ -97,14 +97,14 @@ pub use participant_proxy::ParticipantProxy;
 pub use reliability_kind::ReliabilityKind;
 pub use reliability_qos::ReliabilityQosPolicy;
 pub use resource_limits_qos::ResourceLimitsQosPolicy;
-pub use sequence_number::{SequenceNumber, SEQUENCENUMBER_INVALID};
+pub use sequence_number::{SEQUENCENUMBER_INVALID, SequenceNumber};
 pub use sequence_number_set::SequenceNumberSet;
 pub use serialized_data::SerializedData;
 pub use spdp_discovered_participant_data::PdpDiscoveredParticipantData;
 pub use string::RtpsString;
 pub use submessage_flags::SubmessageFlags;
 pub use time_based_filter_qos::TimeBasedFilterQosPolicy;
-pub use timestamp::{Timestamp, TIME_INFINITE, TIME_INVALID, TIME_ZERO};
+pub use timestamp::{TIME_INFINITE, TIME_INVALID, TIME_ZERO, Timestamp};
 pub use topic_kind::TopicKind;
 pub use vendor_id::*;
 

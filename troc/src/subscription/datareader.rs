@@ -11,17 +11,20 @@ use serde::Deserialize;
 use tokio::{
     runtime::Handle,
     select,
-    sync::mpsc::{Receiver, Sender},
+    sync::{
+        Notify,
+        mpsc::{Receiver, Sender},
+    },
     time::sleep,
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span, event};
-use troc_core::{DdsError, Effect, IncommingMessage, OutcommingMessage, Reader, WriterProxy};
-use troc_core::{Effects, Keyed};
 use troc_core::{
-    deserialize_data,
-    types::{Guid, InlineQos, Locator, SerializedData},
+    CacheChangeContainer, DdsError, Effect, IncommingMessage, OutcommingMessage, Reader,
+    WriterProxy,
 };
+use troc_core::{Effects, Keyed};
+use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
 
 use crate::{
     discovery::DiscoveryActor,
@@ -52,6 +55,7 @@ pub struct DataReader<T> {
     guid: Guid,
     qos: InlineQos,
     data_reader_actor: ActorRef<DataReaderActor>,
+    data_availability_notifier: Arc<Notify>,
     phantom: PhantomData<T>,
 }
 
@@ -60,11 +64,13 @@ impl<T> DataReader<T> {
         guid: Guid,
         qos: QosPolicy,
         data_reader_actor: ActorRef<DataReaderActor>,
+        data_availability_notifier: Arc<Notify>,
     ) -> Self {
         Self {
             guid,
             qos: qos.into(),
             data_reader_actor,
+            data_availability_notifier,
             phantom: PhantomData,
         }
     }
@@ -78,15 +84,22 @@ impl<T> DataReader<T> {
     }
 
     pub async fn read_next_sample_raw(&mut self) -> Result<DataSample<SerializedData>, DdsError> {
-        // loop {
-        //     if let Some(change) = self.reader.lock().unwrap().get_first_available_change() {
-        //         let data = change.data.clone();
-        //         let infos = SampleInfo::from(&change.infos);
-        //         let sample = DataSample::<SerializedData>::new(infos, data);
-        //         return Ok(sample);
-        //     }
-        // }
-        todo!()
+        loop {
+            match self
+                .data_reader_actor
+                .ask(DataReaderActorReadOneMessage::Read {})
+                .await
+                .unwrap()
+            {
+                Some(change) => {
+                    let data = change.data.clone();
+                    let infos = SampleInfo::from(&change.infos);
+                    let sample = DataSample::<SerializedData>::new(infos, data);
+                    return Ok(sample);
+                }
+                None => self.data_availability_notifier.notified().await,
+            }
+        }
     }
 
     pub async fn read_next_sample_raw_timeout(
@@ -111,7 +124,7 @@ impl<T> DataReader<T> {
     {
         let DataSample { infos, data } = self.read_next_sample_raw().await?;
         let data = if let Some(data) = data {
-            let deserialized_data = deserialize_data(&data).unwrap();
+            let deserialized_data = cdr::deserialize(data.get_data()).unwrap();
             Some(deserialized_data)
         } else {
             None
@@ -190,172 +203,39 @@ impl<T> DataReader<T> {
     ) -> Result<Vec<DataSample<T>>, DdsError> {
         unimplemented!()
     }
+}
 
-    // fn launch_management_and_timer_task(
-    //     &self,
-    //     mut ack_schedule_adapter: AckScheduleReceiverAdapter,
-    //     mut discovery_command_receiver: Receiver<DataReaderProxyCommand>,
-    // ) {
-    //     let reader = self.reader.clone();
-    //     let emission_infos_storage = self.emission_infos_storage.clone();
-    //     let cancellation_token = self.cancellation_token.child_token();
-    //     tokio::spawn(async move {
-    //         loop {
-    //             select! {
-    //                     _ = cancellation_token.cancelled() => {
-    //                         break
-    //                     }
-    //                     Some(AckSchedule { writer_guid, delay }) = ack_schedule_adapter.wait_ack_schedule() => {
-    //                         let reader = reader.clone();
-    //                         let emission_infos_storage = emission_infos_storage.clone();
-    //                         tokio::spawn(async move {
-    //                             sleep(delay).await;
-    //                             {
-    //                                 let produce_result = {
-    //                                     let mut reader_guard = reader.lock().unwrap();
-    //                                     reader_guard.produce_acknowledgment(writer_guid)
-    //                                 };
-    //                                 match produce_result {
-    //                                     Ok(Some(out_msg)) => {
-    //                                         Self::process_outcomming_message(out_msg, emission_infos_storage).await;
-    //                                     }
-    //                                     Ok(None) => {
-    //                                         event!(Level::DEBUG, "No missing data")
-    //                                     },
-    //                                     Err(e) => {
-    //                                         event!(Level::ERROR, "{e}");
-    //                                     }
-    //                                 }
-    //                             }
-    //                         });
-    //                     }
-    //                     Some(cmd) = discovery_command_receiver.recv() => {
-    //                         Self::manage_proxies(cmd, &reader, &emission_infos_storage).await;
-    //                     }
-    //                     else => {
-    //                         event!(Level::ERROR, "Management task terminate");
-    //                         break;
-    //                     }
-    //             }
-    //         }
-    //     });
-    // }
+#[derive(Debug)]
+pub enum DataReaderActorReadOneMessage {
+    Read {
+        // TODO
+    },
+}
 
-    // async fn manage_proxies(
-    //     cmd: DataReaderProxyCommand,
-    //     reader: &Arc<Mutex<Reader>>,
-    //     emission_infos_storage: &EmissionInfosStorage,
-    // ) {
-    //     match cmd {
-    //         DataReaderProxyCommand::AddProxy {
-    //             proxy,
-    //             emission_infos,
-    //         } => {
-    //             reader.lock().unwrap().add_proxy(proxy);
-    //             for (locator, sender) in emission_infos {
-    //                 emission_infos_storage.store(locator, sender).await;
-    //             }
-    //         }
-    //         DataReaderProxyCommand::RemoveProxy {
-    //             guid,
-    //             emission_locators,
-    //         } => {
-    //             reader.lock().unwrap().remove_proxy(guid);
-    //             for locator in emission_locators {
-    //                 emission_infos_storage.remove(&locator).await;
-    //             }
-    //         }
-    //     }
-    // }
+impl Message<DataReaderActorReadOneMessage> for DataReaderActor {
+    type Reply = Option<CacheChangeContainer>;
 
-    // fn incomming_task(&self, mut wire: Wire) {
-    //     let reader = self.reader.clone();
-    //     let cancellation_token = self.cancellation_token.child_token();
-    //     tokio::spawn(async move {
-    //         loop {
-    //             select! {
-    //                     _ = cancellation_token.cancelled() => {
-    //                         break
-    //                     }
-    //                     Ok(buffer) = wire.recv() => {
-    //                         let Ok(deserialization_result) = Handle::current()
-    //                             .spawn_blocking(move || Message::deserialize_from(&buffer))
-    //                             .await
-    //                         else {
-    //                             event!(Level::ERROR, "Spawn blocking failed");
-    //                             break;
-    //                         };
-    //                         match deserialization_result {
-    //                             Ok(message) => {
-    //                                 let message = IncommingMessage::new(message);
-    //                                 if let Err(e) = reader.lock().unwrap().ingest(message) {
-    //                                     event!(Level::ERROR, "{e}");
-    //                                 }
-    //                             }
-    //                             Err(e) => {
-    //                                 event!(Level::ERROR, "{e}");
-    //                             }
-    //                         }
-    //                     }
-    //                     else => {
-    //                         event!(Level::ERROR, "Incomming task terminate");
-    //                         break;
-    //                     }
-    //             }
-    //         }
-    //     });
-    // }
-
-    // async fn process_outcomming_message(
-    //     outcomming_message: OutcommingMessage,
-    //     emission_infos_storage: EmissionInfosStorage,
-    // ) {
-    //     let OutcommingMessage {
-    //         timestamp_millis,
-    //         message,
-    //         locators,
-    //     } = outcomming_message;
-    //     match tokio::task::spawn_blocking(move || {
-    //         let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
-    //         match message.serialize_to(&mut emission_buffer) {
-    //             Ok(nb_bytes) => Ok(emission_buffer.split_to(nb_bytes)),
-    //             Err(e) => Err(e),
-    //         }
-    //     })
-    //     .await
-    //     {
-    //         Ok(serialization_result) => {
-    //             let buffer = match serialization_result {
-    //                 Ok(buffer) => buffer,
-    //                 Err(e) => {
-    //                     event!(Level::ERROR, "{e}");
-    //                     return;
-    //                 }
-    //             };
-
-    //             for locator in locators.iter() {
-    //                 emission_infos_storage
-    //                     .get(locator)
-    //                     .await
-    //                     .send(buffer.clone())
-    //                     .await
-    //                     .unwrap();
-    //             }
-    //         }
-    //         Err(e) => {
-    //             event!(Level::ERROR, "{e}");
-    //         }
-    //     }
-    // }
+    async fn handle(
+        &mut self,
+        msg: DataReaderActorReadOneMessage,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        match msg {
+            DataReaderActorReadOneMessage::Read {} => {
+                let a = self.reader.get_first_available_change();
+                a.cloned()
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum DataReaderActorMessage {
-    Read {
-        // TODO
+    IncomingMessage {
+        message: BytesMut,
     },
-    Message {
-        message: troc_core::messages::Message,
+    OutcomingMessage {
+        message: troc_core::Message,
     },
     AddProxy {
         proxy: WriterProxy,
@@ -377,11 +257,17 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         match msg {
-            DataReaderActorMessage::Read {} => {
-                // TODO
-            }
-            DataReaderActorMessage::Message { message } => {
+            DataReaderActorMessage::IncomingMessage { message } => {
+                let message = tokio::task::spawn_blocking(move || {
+                    troc_core::Message::deserialize_from(&message).unwrap()
+                })
+                .await
+                .unwrap();
                 self.reader.ingest(&mut self.effects, message).unwrap()
+            }
+            DataReaderActorMessage::OutcomingMessage { message } => {
+                //
+                todo!()
             }
             DataReaderActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
@@ -398,6 +284,9 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
 
         while let Some(effect) = self.effects.pop() {
             match effect {
+                Effect::DataAvailable => {
+                    self.data_availability_notifier.notify_one();
+                }
                 Effect::Message {
                     timestamp_millis,
                     message,
@@ -440,6 +329,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
 pub struct DataReaderActorCreateObject {
     pub reader: Reader,
     pub input_wires: Vec<ActorRef<WireActor>>,
+    pub data_availability_notifier: Arc<Notify>,
 }
 
 #[derive(Debug)]
@@ -450,6 +340,7 @@ pub struct DataReaderActor {
     timer: ActorRef<TimerActor>,
     input_wires: Vec<ActorRef<WireActor>>,
     output_wires: HashMap<Locator, ActorRef<WireActor>>,
+    data_availability_notifier: Arc<Notify>,
 }
 
 impl Actor for DataReaderActor {
@@ -464,6 +355,7 @@ impl Actor for DataReaderActor {
         let DataReaderActorCreateObject {
             reader,
             input_wires,
+            data_availability_notifier,
         } = args;
 
         let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
@@ -481,6 +373,7 @@ impl Actor for DataReaderActor {
             timer,
             input_wires,
             output_wires: Default::default(),
+            data_availability_notifier,
         };
 
         Ok(datawriter_actor)
@@ -507,7 +400,7 @@ mod tests {
     use rstest::*;
     use tokio::sync::mpsc::channel;
     use tokio_util::sync::CancellationToken;
-    use troc_core::types::{Guid, InlineQos, Locator};
+    use troc_core::{Guid, InlineQos, Locator};
     use troc_core::{ReaderBuilder, ReaderConfiguration};
 
     use crate::{domain::Configuration, subscription::datareader::DataReader};

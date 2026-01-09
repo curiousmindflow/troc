@@ -1,6 +1,6 @@
 use tracing::{Level, event, instrument};
 use troc_core::DdsError;
-use troc_core::types::{DurabilityQosPolicy, InlineQos, LivelinessKind, ReliabilityQosPolicy};
+use troc_core::{DurabilityQosPolicy, InlineQos, LivelinessKind, ReliabilityQosPolicy};
 
 #[derive(Debug)]
 pub struct QosPolicyConsistencyChecker;

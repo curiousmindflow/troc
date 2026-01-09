@@ -8,9 +8,8 @@ use binrw::{BinRead, BinResult, BinWrite, Endian, binrw};
 use cdr::{Error, Infinite};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    deserialize_data, serialize_data,
-    types::{InstanceHandle, SerializedData, parameter::PID_PAD_ID, parameter_id::ParameterId},
+use crate::types::{
+    InstanceHandle, SerializedData, parameter::PID_PAD_ID, parameter_id::ParameterId,
 };
 
 use super::{

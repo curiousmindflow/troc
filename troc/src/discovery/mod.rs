@@ -1,7 +1,4 @@
-use troc_core::{
-    ReaderProxy, WriterProxy,
-    types::{EntityId, GuidPrefix, ParticipantProxy},
-};
+use troc_core::{EntityId, GuidPrefix, ParticipantProxy, ReaderProxy, WriterProxy};
 
 mod disc;
 

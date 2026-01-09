@@ -15,10 +15,7 @@ use async_trait::async_trait;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use tokio::{net::UdpSocket, sync::Mutex};
 use tokio_util::codec::{Decoder, Encoder};
-use troc_core::{
-    messages::Message,
-    types::{Locator, LocatorList},
-};
+use troc_core::{Locator, LocatorList, Message};
 
 use crate::domain::UdpHelper;
 

@@ -6,7 +6,7 @@ mod wire_factory;
 use async_trait::async_trait;
 use bytes::BytesMut;
 pub use error::WireError;
-use troc_core::types::Locator;
+use troc_core::Locator;
 pub use wire::*;
 pub use wire_factory::{
     WireActor, WireActorMessage, WireActorReply, WireFactoryActor, WireFactoryActorMessage,

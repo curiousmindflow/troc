@@ -2,14 +2,14 @@ use kameo::Actor;
 use kameo::actor::{ActorRef, Spawn};
 use kameo::prelude::Message;
 use tracing::{Level, event};
-use troc_core::types::builtin_endpoint_qos::BuiltinEndpointQos;
-use troc_core::types::domain_id::DomainId;
-use troc_core::types::{DomainTag, EntityId, EntityKey};
-use troc_core::types::{
+use troc_core::builtin_endpoint_qos::BuiltinEndpointQos;
+use troc_core::domain_id::DomainId;
+use troc_core::{DdsError, Discovery, DiscoveryBuilder, DiscoveryConfiguration};
+use troc_core::{DomainTag, EntityId, EntityKey};
+use troc_core::{
     ENTITYID_PARTICIPANT, Guid, LocatorList, ParticipantProxy, TopicKind, VENDORID_UNKNOWN,
     builtin_endpoint_set::BuiltinEndpointSet,
 };
-use troc_core::{DdsError, Discovery, DiscoveryBuilder, DiscoveryConfiguration};
 
 use crate::discovery::{DiscoveryActor, DiscoveryActorCreateObject, DiscoveryActorMessage};
 use crate::domain::{
@@ -45,13 +45,8 @@ impl DomainParticipantBuilder {
         Self::default()
     }
 
-    pub fn with_name(mut self, name: impl AsRef<str>) -> Self {
-        self.name = Some(name.as_ref().to_string());
-        self
-    }
-
-    pub fn with_listener(mut self) -> Self {
-        self.listener = true;
+    pub fn with_domain(mut self, domain_id: u32) -> Self {
+        self.domain_id = domain_id;
         self
     }
 
@@ -212,6 +207,13 @@ impl DomainParticipant {
 
         let publisher_actor = PublisherActor::spawn(PublisherActorCreateObject {});
 
+        self.actor
+            .ask(DomainParticipantMessage::CreatePublisher(
+                publisher_actor.clone(),
+            ))
+            .await
+            .unwrap();
+
         let publisher = Publisher::new(
             pub_guid,
             default_unicast_locators,
@@ -246,6 +248,13 @@ impl DomainParticipant {
 
         let subscriber_actor = SubscriberActor::spawn(SubscriberActorCreateObject {});
 
+        self.actor
+            .ask(DomainParticipantMessage::CreateSubscriber(
+                subscriber_actor.clone(),
+            ))
+            .await
+            .unwrap();
+
         let subscriber = Subscriber::new(
             sub_guid,
             default_unicast_locators,
@@ -261,8 +270,8 @@ impl DomainParticipant {
 
 #[derive(Debug)]
 enum DomainParticipantMessage {
-    CreatePublisher,
-    CreateSubscriber,
+    CreatePublisher(ActorRef<PublisherActor>),
+    CreateSubscriber(ActorRef<SubscriberActor>),
 }
 
 impl Message<DomainParticipantMessage> for DomainParticipantActor {
@@ -274,13 +283,11 @@ impl Message<DomainParticipantMessage> for DomainParticipantActor {
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         match msg {
-            DomainParticipantMessage::CreatePublisher => {
-                // TODO
-                // call Self::create_publisher(..)
+            DomainParticipantMessage::CreatePublisher(actor) => {
+                self.publishers.push(actor);
             }
-            DomainParticipantMessage::CreateSubscriber => {
-                // TODO
-                // call Self::create_subscriber(..)
+            DomainParticipantMessage::CreateSubscriber(actor) => {
+                self.subscribers.push(actor);
             }
         }
     }
@@ -306,6 +313,8 @@ struct DomainParticipantActor {
     wire_factory: ActorRef<WireFactoryActor>,
     discovery: ActorRef<DiscoveryActor>,
     entity_identifier: ActorRef<EntityIdentifierActor>,
+    publishers: Vec<ActorRef<PublisherActor>>,
+    subscribers: Vec<ActorRef<SubscriberActor>>,
 }
 
 impl Actor for DomainParticipantActor {
@@ -358,6 +367,8 @@ impl Actor for DomainParticipantActor {
             wire_factory,
             discovery,
             entity_identifier,
+            publishers: Vec::default(),
+            subscribers: Vec::default(),
         };
         Ok(domain_participant_actor)
     }
@@ -370,7 +381,7 @@ impl Actor for DomainParticipantActor {
         // stop all publisher and subscriber
         // stop DiscoveryActor
         // stop WireFactoryActor
-        todo!()
+        Ok(())
     }
 
     async fn on_link_died(
@@ -380,7 +391,7 @@ impl Actor for DomainParticipantActor {
         reason: kameo::prelude::ActorStopReason,
     ) -> Result<std::ops::ControlFlow<kameo::prelude::ActorStopReason>, Self::Error> {
         // relaunch dead Actor if they didn't die on purpose
-        todo!()
+        panic!()
     }
 }
 

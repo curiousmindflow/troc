@@ -1,12 +1,15 @@
+use std::sync::Arc;
+
 use kameo::{
     Actor,
     actor::{ActorRef, Spawn},
     prelude::Message,
 };
 use serde::Deserialize;
+use tokio::sync::Notify;
 use troc_core::{
-    DdsError, Keyed, ReaderBuilder, ReaderConfiguration, ReaderProxy,
-    types::{EntityId, EntityKey, Guid, GuidPrefix, LocatorList, TopicKind},
+    DdsError, EntityId, EntityKey, Guid, GuidPrefix, Keyed, LocatorList, ReaderBuilder,
+    ReaderConfiguration, ReaderProxy, TopicKind,
 };
 
 use crate::{
@@ -101,12 +104,20 @@ impl Subscriber {
             .unwrap();
         input_wires.extend(machine_wires);
 
+        let data_availability_notifier = Arc::new(Notify::new());
         let reader_actor = DataReaderActor::spawn(DataReaderActorCreateObject {
             reader,
             input_wires,
+            data_availability_notifier: data_availability_notifier.clone(),
         });
 
-        let datareader = DataReader::new(reader_guid, *qos, reader_actor.clone()).await;
+        let datareader = DataReader::new(
+            reader_guid,
+            *qos,
+            reader_actor.clone(),
+            data_availability_notifier,
+        )
+        .await;
 
         self.subscriber_actor
             .ask(SubscriberActorMessage {

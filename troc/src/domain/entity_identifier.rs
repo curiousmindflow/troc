@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use kameo::{Actor, Reply, error::Infallible, prelude::Message};
-use troc_core::types::EntityKey;
+use troc_core::EntityKey;
 
 #[derive(Debug)]
 pub enum EntityIdentifierActorAskMessage {

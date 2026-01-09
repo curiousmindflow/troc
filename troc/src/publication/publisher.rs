@@ -4,12 +4,12 @@ use kameo::actor::Spawn;
 use kameo::prelude::Message;
 use serde::Serialize;
 use troc_core::DdsError;
+use troc_core::EntityKey;
 use troc_core::Keyed;
 use troc_core::WriterBuilder;
 use troc_core::WriterConfiguration;
 use troc_core::WriterProxy;
-use troc_core::types::EntityKey;
-use troc_core::types::{EntityId, Guid, GuidPrefix, LocatorList, TopicKind};
+use troc_core::{EntityId, Guid, GuidPrefix, LocatorList, TopicKind};
 
 use crate::domain::ENTITY_IDENTIFIER_ACTOR_NAME;
 use crate::domain::EntityIdentifierActorAskMessage;

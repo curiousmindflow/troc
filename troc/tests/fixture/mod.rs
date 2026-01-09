@@ -3,7 +3,7 @@ pub(crate) mod fixtures;
 use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
-use troc_key::{DDSType, KeyCalculationError, Keyed, cdr};
+use troc::{DDSType, KeyCalculationError, Keyed, cdr};
 
 #[allow(unused_imports)]
 pub use fixtures::*;

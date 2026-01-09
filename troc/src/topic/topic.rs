@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use troc_core::types::TopicKind;
+use troc_core::TopicKind;
 
 use crate::infrastructure::QosPolicy;
 

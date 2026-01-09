@@ -9,7 +9,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use troc_core::types::{Locator, LocatorKind, LocatorList};
+use troc_core::{Locator, LocatorKind, LocatorList};
 
 pub type WireFactoryResult = Result<Vec<ActorRef<WireActor>>, WireError>;
 

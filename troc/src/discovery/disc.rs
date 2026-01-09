@@ -4,7 +4,7 @@ use kameo::{Actor, prelude::Message};
 use tracing::{Level, event};
 use troc_core::{DdsError, Discovery as ProtocolDiscovery, Effects, ReaderProxy, WriterProxy};
 
-use troc_core::types::{EntityId, InlineQos, ParticipantProxy};
+use troc_core::{EntityId, InlineQos, ParticipantProxy};
 
 use crate::domain::TIMER_ACTOR_NAME;
 use crate::time::{TimerActor, TimerActorMessage};
@@ -12,18 +12,12 @@ use crate::time::{TimerActor, TimerActorMessage};
 #[derive(Debug)]
 pub enum DiscoveryActorMessage {
     ParticipantProxyChanged(ParticipantProxy),
-    WriterCreated {
-        writer_proxy: WriterProxy,
-    },
+    WriterCreated { writer_proxy: WriterProxy },
     WriterRemoved(EntityId),
-    ReaderCreated {
-        reader_proxy: ReaderProxy,
-    },
+    ReaderCreated { reader_proxy: ReaderProxy },
     ReaderRemoved(EntityId),
     Tick,
-    Message {
-        message: troc_core::messages::Message,
-    },
+    Message { message: troc_core::Message },
 }
 
 impl Message<DiscoveryActorMessage> for DiscoveryActor {

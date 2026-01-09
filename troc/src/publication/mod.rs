@@ -4,7 +4,7 @@ mod publisher;
 pub use datawriter::{DataWriter, DataWriterActor, DataWriterActorMessage};
 pub use publisher::{Publisher, PublisherActor, PublisherActorCreateObject, PublisherActorMessage};
 
-use troc_core::types::DurationKind;
+use troc_core::DurationKind;
 use troc_core::{DdsError, ReaderProxy};
 
 #[derive(Debug, Clone)]

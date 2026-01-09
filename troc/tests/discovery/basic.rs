@@ -10,8 +10,8 @@ use crate::{
     discovery::{DOMAIN_ID_98, DOMAIN_ID_99},
     fixture::{TwoParticipantsBundle, build_qos, two_participants},
 };
-use common::types::DurationKind;
-use troc_core::{DomainParticipantListener, QosPolicy, TopicKind};
+use troc::{DomainParticipantListener, QosPolicy, TopicKind};
+use troc_core::types::DurationKind;
 
 use rstest::*;
 

@@ -3,13 +3,12 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::fixture::DummyStruct;
-use common::types::{DomainTag, DurationKind, LivelinessQosPolicy};
 use rstest::fixture;
 use tracing::{Level, event};
-use troc_core::{
-    Configuration, DataReader, DataReaderParamsBuilder, DataWriter, DataWriterParamsBuilder,
-    DeadlineQosPolicy, DomainParticipant, DomainParticipantParamsBuilder, DurabilityQosPolicy,
-    HistoryQosPolicy, LifespanQosPolicy, Publisher, QosPolicy, QosPolicyBuilder,
+use troc::{
+    Configuration, DataReader, DataWriter, DeadlineQosPolicy, DomainParticipant,
+    DomainParticipantBuilder, DomainTag, DurabilityQosPolicy, DurationKind, HistoryQosPolicy,
+    LifespanQosPolicy, LivelinessQosPolicy, Publisher, QosPolicy, QosPolicyBuilder,
     ReliabilityQosPolicy, Subscriber, TopicKind,
 };
 
@@ -59,21 +58,13 @@ pub async fn two_participants(
     configuration.discovery.announcement_period = Duration::from_secs(1);
     configuration.discovery.lease_duration = Duration::from_secs(3);
 
-    let alpha_params = DomainParticipantParamsBuilder::new()
-        .with_name("alpha")
-        .enable_listener()
+    let mut alpha_domain_participant = DomainParticipantBuilder::new()
         .with_config(configuration.clone())
         .build();
-    let mut alpha_domain_participant =
-        DomainParticipant::new_with_params(alpha_domain_id, alpha_params).await;
 
-    let beta_params = DomainParticipantParamsBuilder::new()
-        .with_name("beta")
-        .enable_listener()
-        .with_config(configuration)
+    let mut beta_domain_participant = DomainParticipantBuilder::new()
+        .with_config(configuration.clone())
         .build();
-    let mut beta_domain_participant =
-        DomainParticipant::new_with_params(beta_domain_id, beta_params).await;
 
     let topic_name = build_test_topic(topic_name.as_ref());
     let topic =
@@ -88,21 +79,13 @@ pub async fn two_participants(
         .await
         .unwrap();
 
-    let beta_reader_params = DataReaderParamsBuilder::new()
-        .with_name("TestReader")
-        .enable_listener()
-        .build();
     let beta_reader = beta_subscriber
-        .create_datareader_with_params::<DummyStruct>(&topic, &reader_qos, beta_reader_params)
+        .create_datareader::<DummyStruct>(&topic, &reader_qos)
         .await
         .unwrap();
 
-    let alpha_writer_params = DataWriterParamsBuilder::new()
-        .with_name("TestWriter")
-        .enable_listener()
-        .build();
     let alpha_writer = alpha_publisher
-        .create_datawriter_with_params::<DummyStruct>(&topic, &writer_qos, alpha_writer_params)
+        .create_datawriter::<DummyStruct>(&topic, &writer_qos)
         .await
         .unwrap();
 
@@ -127,7 +110,7 @@ pub async fn three_participants(
     let mut configuration = Configuration::default();
     configuration.global.domain_tag = DomainTag::from_str(&unique_id).unwrap();
 
-    let alpha_params = DomainParticipantParamsBuilder::new()
+    let alpha_params = DomainParticipantBuilder::new()
         .with_name("alpha")
         .enable_listener()
         .with_config(configuration.clone())
@@ -176,7 +159,7 @@ pub async fn three_participants(
         .unwrap();
     let mut alpha_writer_listener = alpha_writer.get_listener().await.unwrap();
 
-    let beta_params = DomainParticipantParamsBuilder::new()
+    let beta_params = DomainParticipantBuilder::new()
         .with_name("beta")
         .enable_listener()
         .with_config(configuration.clone())
@@ -213,7 +196,7 @@ pub async fn three_participants(
         .unwrap();
     let mut beta_writer_listener = beta_writer.get_listener().await.unwrap();
 
-    let gamma_params = DomainParticipantParamsBuilder::new()
+    let gamma_params = DomainParticipantBuilder::new()
         .with_name("gamma")
         .enable_listener()
         .with_config(configuration)

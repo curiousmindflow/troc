@@ -2,7 +2,7 @@ use std::{net::Ipv4Addr, ops::Range, str::FromStr, time::Duration};
 
 use serde::{Deserialize, Serialize};
 
-use troc_core::types::{DomainTag, Locator, LocatorList, domain_id::DomainId};
+use troc_core::{DomainTag, Locator, LocatorList, domain_id::DomainId};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Configuration {

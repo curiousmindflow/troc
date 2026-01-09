@@ -1,27 +1,27 @@
 mod common;
 mod discovery;
 mod key;
-pub mod messages;
+mod messages;
 mod publication;
 mod subscription;
-pub mod types;
+mod types;
 
-pub use cdr::{CdrBe, Infinite};
+pub use cdr;
 pub use common::{
-    CacheChange, CacheChangeInfos, Effect, Effects, IncommingMessage, OutcommingMessage,
-    ReaderProxy, WriterProxy,
+    CacheChange, CacheChangeContainer, CacheChangeInfos, Effect, Effects, IncommingMessage,
+    OutcommingMessage, ReaderProxy, WriterProxy,
 };
 pub use discovery::{
     Announce, DiscoveredReaderData, DiscoveredWriterData, Discovery, DiscoveryBuilder,
     DiscoveryConfiguration,
 };
 pub use key::{KeyCalculationError, Keyed};
+pub use messages::*;
 use pretty_hex::HexConfig;
 pub use publication::{Writer, WriterBuilder, WriterConfiguration};
-use serde::{Deserialize, Serialize};
 pub use subscription::{Reader, ReaderBuilder, ReaderConfiguration};
 use thiserror::Error;
-use types::SerializedData;
+pub use types::*;
 
 #[derive(Debug, Error)]
 pub enum DdsError {
@@ -84,19 +84,3 @@ const PRETTY_HEX_CONFIG: HexConfig = HexConfig {
     max_bytes: usize::MAX,
     display_offset: 0,
 };
-
-pub fn serialize_data<T>(data: &T) -> Result<SerializedData, cdr::Error>
-where
-    T: Serialize,
-{
-    let data = cdr::serialize::<_, _, CdrBe>(data, Infinite)?;
-    let data = SerializedData::from_vec(data);
-    Ok(data)
-}
-
-pub fn deserialize_data<'a, T>(data: &SerializedData) -> Result<T, cdr::Error>
-where
-    T: Deserialize<'a>,
-{
-    cdr::deserialize::<T>(&data.get_data())
-}
