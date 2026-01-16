@@ -12,13 +12,11 @@ use troc_core::{EntityId, Guid, GuidPrefix, LocatorList, TopicKind};
 
 use crate::discovery::DiscoveryActor;
 use crate::discovery::DiscoveryActorMessage;
-use crate::domain::DISCOVERY_ACTOR_NAME;
-use crate::domain::ENTITY_IDENTIFIER_ACTOR_NAME;
 use crate::domain::EntityIdentifierActorAskMessage;
-use crate::domain::WIRE_FACTORY_ACTOR_NAME;
 use crate::publication::DataWriterActor;
 use crate::publication::DataWriterActorMessage;
 use crate::publication::datawriter::DataWriterActorCreateObject;
+use crate::time::TimerActor;
 use crate::wires::ReceiverWireFactoryActorMessage;
 use crate::wires::ReceiverWireFactoryActorMessageDestKind;
 use crate::wires::WireFactoryActor;
@@ -34,6 +32,10 @@ pub struct Publisher {
     guid: Guid,
     qos: QosPolicy,
     publisher_actor: ActorRef<PublisherActor>,
+    wire_factory: ActorRef<WireFactoryActor>,
+    discovery: ActorRef<DiscoveryActor>,
+    entity_identifier: ActorRef<EntityIdentifierActor>,
+    timer: ActorRef<TimerActor>,
 }
 
 impl Publisher {
@@ -44,11 +46,19 @@ impl Publisher {
         qos: QosPolicy,
         config: Configuration,
         publisher_actor: ActorRef<PublisherActor>,
+        wire_factory: ActorRef<WireFactoryActor>,
+        discovery: ActorRef<DiscoveryActor>,
+        entity_identifier: ActorRef<EntityIdentifierActor>,
+        timer: ActorRef<TimerActor>,
     ) -> Self {
         Self {
             guid,
             qos,
             publisher_actor,
+            wire_factory,
+            discovery,
+            entity_identifier,
+            timer,
         }
     }
 
@@ -68,15 +78,8 @@ impl Publisher {
     where
         T: Serialize + Keyed + 'static,
     {
-        let entity_identifier_actore =
-            ActorRef::<EntityIdentifierActor>::lookup(ENTITY_IDENTIFIER_ACTOR_NAME)
-                .unwrap()
-                .unwrap();
-        let wire_factory = ActorRef::<WireFactoryActor>::lookup(WIRE_FACTORY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
-        let writer_key: EntityKey = entity_identifier_actore
+        let writer_key: EntityKey = self
+            .entity_identifier
             .ask(EntityIdentifierActorAskMessage::AskWriterId)
             .await
             .unwrap()
@@ -95,9 +98,14 @@ impl Publisher {
             .reliability(reliable)
             .build();
         let writer_proxy = writer.extract_proxy();
-        let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject { writer });
+        let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject {
+            writer,
+            discovery: self.discovery.clone(),
+            timer: self.timer.clone(),
+        });
 
-        let (input_wires, locators) = wire_factory
+        let (input_wires, locators) = self
+            .wire_factory
             .ask(ReceiverWireFactoryActorMessage::<DataWriterActor>::new(
                 ReceiverWireFactoryActorMessageDestKind::Applicative,
                 writer_actor.clone(),
@@ -152,7 +160,9 @@ impl Message<PublisherActorMessage> for PublisherActor {
 }
 
 #[derive(Debug)]
-pub struct PublisherActorCreateObject {}
+pub struct PublisherActorCreateObject {
+    pub discovery: ActorRef<DiscoveryActor>,
+}
 
 #[derive(Debug)]
 pub struct PublisherActor {
@@ -166,16 +176,12 @@ impl Actor for PublisherActor {
     type Error = DdsError;
 
     async fn on_start(
-        _args: Self::Args,
+        args: Self::Args,
         _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
         let publisher_actor = Self {
             writers: Default::default(),
-            discovery,
+            discovery: args.discovery,
         };
 
         Ok(publisher_actor)

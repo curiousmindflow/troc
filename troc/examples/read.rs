@@ -47,7 +47,7 @@ async fn main() {
         .unwrap();
     }
 
-    let mut domain_participant = DomainParticipantBuilder::new().with_domain(0).build();
+    let mut domain_participant = DomainParticipantBuilder::new().with_domain(0).build().await;
     let dp_listener = domain_participant.get_listener().await.unwrap();
     listen_participant(dp_listener, domain_participant.get_guid(), "").await;
 

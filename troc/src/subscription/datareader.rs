@@ -28,7 +28,6 @@ use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
 
 use crate::{
     discovery::DiscoveryActor,
-    domain::{DISCOVERY_ACTOR_NAME, TIMER_ACTOR_NAME},
     infrastructure::QosPolicy,
     subscription::{
         DataReaderListener, condition::ReadCondition, data_sample::DataSample,
@@ -332,6 +331,8 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
 pub struct DataReaderActorCreateObject {
     pub reader: Reader,
     pub data_availability_notifier: Arc<Notify>,
+    pub discovery: ActorRef<DiscoveryActor>,
+    pub timer: ActorRef<TimerActor>,
 }
 
 #[derive(Debug)]
@@ -357,15 +358,9 @@ impl Actor for DataReaderActor {
         let DataReaderActorCreateObject {
             reader,
             data_availability_notifier,
+            discovery,
+            timer,
         } = args;
-
-        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
-        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
 
         let datawriter_actor = Self {
             reader,

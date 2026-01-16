@@ -67,7 +67,7 @@ impl SimpleDDSBundle {
             }
         };
 
-        let mut alpha_p = DomainParticipantBuilder::new().with_domain(0).build();
+        let mut alpha_p = DomainParticipantBuilder::new().with_domain(0).build().await;
         let alpha_qos = alpha_p
             .create_qos_builder()
             .reliability(reliability)
@@ -87,7 +87,7 @@ impl SimpleDDSBundle {
             .unwrap();
         let mut alpha_reader_listener = alpha_reader.get_listener().await.unwrap();
 
-        let mut beta_p = DomainParticipantBuilder::new().with_domain(0).build();
+        let mut beta_p = DomainParticipantBuilder::new().with_domain(0).build().await;
         let beta_qos = beta_p
             .create_qos_builder()
             .reliability(reliability)
@@ -163,7 +163,7 @@ impl OneWriterManyReaderDDSBundle {
             }
         };
 
-        let mut alpha_p = DomainParticipantBuilder::new().with_domain(0).build();
+        let mut alpha_p = DomainParticipantBuilder::new().with_domain(0).build().await;
         let alpha_qos = alpha_p
             .create_qos_builder()
             .reliability(reliability)
@@ -183,7 +183,7 @@ impl OneWriterManyReaderDDSBundle {
             .unwrap();
         let mut alpha_reader_listener = alpha_reader.get_listener().await.unwrap();
 
-        let mut beta_p = DomainParticipantBuilder::new().with_domain(0).build();
+        let mut beta_p = DomainParticipantBuilder::new().with_domain(0).build().await;
         let beta_qos = beta_p
             .create_qos_builder()
             .reliability(reliability)
@@ -203,7 +203,7 @@ impl OneWriterManyReaderDDSBundle {
             .unwrap();
         let mut beta_writer_listener = beta_writer.get_listener().await.unwrap();
 
-        let mut gamma_p = DomainParticipantBuilder::new().with_domain(0).build();
+        let mut gamma_p = DomainParticipantBuilder::new().with_domain(0).build().await;
         let gamma_qos = gamma_p
             .create_qos_builder()
             .reliability(reliability)

@@ -68,12 +68,12 @@ impl Actor for TimerActor {
         args: Self::Args,
         actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        todo!()
+        Ok(args)
     }
 }
 
 impl TimerActor {
     pub fn new() -> Self {
-        todo!()
+        Self {}
     }
 }

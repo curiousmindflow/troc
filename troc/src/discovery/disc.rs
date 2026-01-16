@@ -13,7 +13,6 @@ use troc_core::{
 use troc_core::{EntityId, InlineQos, ParticipantProxy};
 
 use crate::ParticipantEvent;
-use crate::domain::TIMER_ACTOR_NAME;
 use crate::time::{TimerActor, TimerActorMessage};
 use crate::wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage};
 
@@ -168,6 +167,7 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
 pub struct DiscoveryActorCreateObject {
     pub discovery: ProtocolDiscovery,
     pub event_sender: Sender<ParticipantEvent>,
+    pub timer: ActorRef<TimerActor>,
 }
 
 #[derive()]
@@ -189,13 +189,10 @@ impl Actor for DiscoveryActor {
         args: Self::Args,
         _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
         let actor = Self {
             discovery: args.discovery,
             effects: Effects::default(),
-            timer,
+            timer: args.timer,
             event_sender: args.event_sender,
             input_wires: Default::default(),
             output_wires: Default::default(),

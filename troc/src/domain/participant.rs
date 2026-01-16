@@ -16,9 +16,6 @@ use troc_core::{
 
 use crate::ParticipantEvent;
 use crate::discovery::{DiscoveryActor, DiscoveryActorCreateObject, DiscoveryActorMessage};
-use crate::domain::{
-    DISCOVERY_ACTOR_NAME, ENTITY_IDENTIFIER_ACTOR_NAME, TIMER_ACTOR_NAME, WIRE_FACTORY_ACTOR_NAME,
-};
 use crate::publication::{Publisher, PublisherActor, PublisherActorCreateObject};
 use crate::subscription::{Subscriber, SubscriberActor, SubscriberActorCreateObject};
 use crate::time::TimerActor;
@@ -57,7 +54,7 @@ impl DomainParticipantBuilder {
         self
     }
 
-    pub fn build(self) -> DomainParticipant {
+    pub async fn build(self) -> DomainParticipant {
         let DomainParticipantBuilder {
             domain_id,
             configuration,
@@ -71,6 +68,7 @@ impl DomainParticipantBuilder {
             guid,
             configuration: configuration.clone(),
         });
+        actor.wait_for_startup().await;
 
         DomainParticipant {
             guid,
@@ -140,84 +138,20 @@ impl DomainParticipant {
     }
 
     pub async fn create_publisher(&mut self, qos: &QosPolicy) -> Result<Publisher, DdsError> {
-        let entity_identifier =
-            ActorRef::<EntityIdentifierActor>::lookup(ENTITY_IDENTIFIER_ACTOR_NAME)
-                .unwrap()
-                .unwrap();
-        let pub_key: EntityKey = entity_identifier
-            .ask(EntityIdentifierActorAskMessage::AskPublisherId)
-            .await
-            .unwrap()
-            .into();
-        let pub_id = EntityId::writer_group_builtin(pub_key.0);
-        let pub_guid = Guid::new(self.guid.get_guid_prefix(), pub_id);
-
-        let default_unicast_locators = Default::default();
-        let default_multicast_locators = self
-            .configuration
-            .global
-            .default_multicast_locator_list
-            .clone();
-
-        let publisher_actor = PublisherActor::spawn(PublisherActorCreateObject {});
-
-        self.actor
-            .ask(DomainParticipantMessage::CreatePublisher(
-                publisher_actor.clone(),
-            ))
+        let publisher = self
+            .actor
+            .ask(DomainParticipantActorCreatePublisherMessage { qos: *qos })
             .await
             .unwrap();
-
-        let publisher = Publisher::new(
-            pub_guid,
-            default_unicast_locators,
-            default_multicast_locators,
-            *qos,
-            self.configuration.clone(),
-            publisher_actor,
-        );
-
         Ok(publisher)
     }
 
     pub async fn create_subscriber(&mut self, qos: &QosPolicy) -> Result<Subscriber, DdsError> {
-        let entity_identifier =
-            ActorRef::<EntityIdentifierActor>::lookup(ENTITY_IDENTIFIER_ACTOR_NAME)
-                .unwrap()
-                .unwrap();
-        let sub_key: EntityKey = entity_identifier
-            .ask(EntityIdentifierActorAskMessage::AskSubscriberId)
-            .await
-            .unwrap()
-            .into();
-        let sub_id = EntityId::writer_group_builtin(sub_key.0);
-        let sub_guid = Guid::new(self.guid.get_guid_prefix(), sub_id);
-
-        let default_unicast_locators = Default::default();
-        let default_multicast_locators = self
-            .configuration
-            .global
-            .default_multicast_locator_list
-            .clone();
-
-        let subscriber_actor = SubscriberActor::spawn(SubscriberActorCreateObject {});
-
-        self.actor
-            .ask(DomainParticipantMessage::CreateSubscriber(
-                subscriber_actor.clone(),
-            ))
+        let subscriber = self
+            .actor
+            .ask(DomainParticipantActorCreateSubscriberMessage { qos: *qos })
             .await
             .unwrap();
-
-        let subscriber = Subscriber::new(
-            sub_guid,
-            default_unicast_locators,
-            default_multicast_locators,
-            *qos,
-            self.configuration.clone(),
-            subscriber_actor,
-        );
-
         Ok(subscriber)
     }
 }
@@ -238,27 +172,36 @@ impl Message<DomainParticipantListenerCreate> for DomainParticipantActor {
 }
 
 #[derive(Debug)]
-enum DomainParticipantMessage {
-    CreatePublisher(ActorRef<PublisherActor>),
-    CreateSubscriber(ActorRef<SubscriberActor>),
+struct DomainParticipantActorCreatePublisherMessage {
+    qos: QosPolicy,
 }
 
-impl Message<DomainParticipantMessage> for DomainParticipantActor {
-    type Reply = ();
+impl Message<DomainParticipantActorCreatePublisherMessage> for DomainParticipantActor {
+    type Reply = Result<Publisher, DdsError>;
 
     async fn handle(
         &mut self,
-        msg: DomainParticipantMessage,
+        msg: DomainParticipantActorCreatePublisherMessage,
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        match msg {
-            DomainParticipantMessage::CreatePublisher(actor) => {
-                self.publishers.push(actor);
-            }
-            DomainParticipantMessage::CreateSubscriber(actor) => {
-                self.subscribers.push(actor);
-            }
-        }
+        self.create_publisher(&msg.qos).await
+    }
+}
+
+#[derive(Debug)]
+struct DomainParticipantActorCreateSubscriberMessage {
+    qos: QosPolicy,
+}
+
+impl Message<DomainParticipantActorCreateSubscriberMessage> for DomainParticipantActor {
+    type Reply = Result<Subscriber, DdsError>;
+
+    async fn handle(
+        &mut self,
+        msg: DomainParticipantActorCreateSubscriberMessage,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.create_subscriber(&msg.qos).await
     }
 }
 
@@ -285,6 +228,74 @@ struct DomainParticipantActor {
     _event_sender: Sender<ParticipantEvent>,
 }
 
+impl DomainParticipantActor {
+    async fn create_publisher(&mut self, qos: &QosPolicy) -> Result<Publisher, DdsError> {
+        let pub_key: EntityKey = self
+            .entity_identifier
+            .ask(EntityIdentifierActorAskMessage::AskPublisherId)
+            .await
+            .unwrap()
+            .into();
+        let pub_id = EntityId::writer_group_builtin(pub_key.0);
+        let pub_guid = Guid::new(self.guid.get_guid_prefix(), pub_id);
+
+        let default_unicast_locators = Default::default();
+        let default_multicast_locators = self.config.global.default_multicast_locator_list.clone();
+
+        let publisher_actor = PublisherActor::spawn(PublisherActorCreateObject {
+            discovery: self.discovery.clone(),
+        });
+
+        let publisher = Publisher::new(
+            pub_guid,
+            default_unicast_locators,
+            default_multicast_locators,
+            *qos,
+            self.config.clone(),
+            publisher_actor,
+            self.wire_factory.clone(),
+            self.discovery.clone(),
+            self.entity_identifier.clone(),
+            self.timer.clone(),
+        );
+
+        Ok(publisher)
+    }
+
+    async fn create_subscriber(&mut self, qos: &QosPolicy) -> Result<Subscriber, DdsError> {
+        let sub_key: EntityKey = self
+            .entity_identifier
+            .ask(EntityIdentifierActorAskMessage::AskSubscriberId)
+            .await
+            .unwrap()
+            .into();
+        let sub_id = EntityId::writer_group_builtin(sub_key.0);
+        let sub_guid = Guid::new(self.guid.get_guid_prefix(), sub_id);
+
+        let default_unicast_locators = Default::default();
+        let default_multicast_locators = self.config.global.default_multicast_locator_list.clone();
+
+        let subscriber_actor = SubscriberActor::spawn(SubscriberActorCreateObject {
+            discovery: self.discovery.clone(),
+        });
+
+        let subscriber = Subscriber::new(
+            sub_guid,
+            default_unicast_locators,
+            default_multicast_locators,
+            *qos,
+            self.config.clone(),
+            subscriber_actor,
+            self.wire_factory.clone(),
+            self.discovery.clone(),
+            self.entity_identifier.clone(),
+            self.timer.clone(),
+        );
+
+        Ok(subscriber)
+    }
+}
+
 impl Actor for DomainParticipantActor {
     type Args = DomainParticipantActorCreationObject;
 
@@ -296,14 +307,12 @@ impl Actor for DomainParticipantActor {
     ) -> Result<Self, Self::Error> {
         let timer = TimerActor::spawn(TimerActor::new());
         timer.wait_for_startup().await;
-        timer.register(TIMER_ACTOR_NAME).unwrap();
         actor_ref.link(&timer).await;
         let wire_factory = WireFactoryActor::spawn(WireFactoryActor::new(
             args.domain_id,
             args.configuration.clone(),
         ));
         wire_factory.wait_for_startup().await;
-        wire_factory.register(WIRE_FACTORY_ACTOR_NAME).unwrap();
         actor_ref.link(&wire_factory).await;
         let (event_sender, _) = channel(64);
         let discovery_configuration = DiscoveryConfiguration::new();
@@ -313,15 +322,12 @@ impl Actor for DomainParticipantActor {
         let discovery = DiscoveryActor::spawn(DiscoveryActorCreateObject {
             discovery,
             event_sender: event_sender.clone(),
+            timer: timer.clone(),
         });
         discovery.wait_for_startup().await;
-        discovery.register(DISCOVERY_ACTOR_NAME).unwrap();
         actor_ref.link(&discovery).await;
         let entity_identifier = EntityIdentifierActor::spawn(());
         entity_identifier.wait_for_startup().await;
-        entity_identifier
-            .register(ENTITY_IDENTIFIER_ACTOR_NAME)
-            .unwrap();
         actor_ref.link(&entity_identifier).await;
 
         let mut endpoint_set = BuiltinEndpointSet::new();

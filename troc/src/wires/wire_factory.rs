@@ -101,7 +101,12 @@ where
                 let receiver_wire_actor = ReceiverWireActor::spawn((actor, wire));
                 (vec![receiver_wire_actor], LocatorList::new(vec![locator]))
             }
-            ReceiverWireFactoryActorMessageDestKind::SEDP => todo!(),
+            ReceiverWireFactoryActorMessageDestKind::SEDP => {
+                let wire = self.build_discovery_unicast_wire().unwrap();
+                let locator = wire.locator();
+                let receiver_wire_actor = ReceiverWireActor::spawn((actor, wire));
+                (vec![receiver_wire_actor], LocatorList::new(vec![locator]))
+            }
         }
     }
 }

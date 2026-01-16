@@ -68,7 +68,7 @@ async fn main() {
     let r = running_0.clone();
     ctrlc::set_handler(move || r.store(false, Ordering::SeqCst)).unwrap();
 
-    let mut domain_participant = DomainParticipantBuilder::new().with_domain(0).build();
+    let mut domain_participant = DomainParticipantBuilder::new().with_domain(0).build().await;
     let qos = domain_participant
         .create_qos_builder()
         .reliability(if cli_args.best_effort {

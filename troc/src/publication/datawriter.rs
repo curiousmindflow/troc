@@ -2,7 +2,6 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use crate::{
     discovery::DiscoveryActor,
-    domain::{DISCOVERY_ACTOR_NAME, TIMER_ACTOR_NAME},
     infrastructure::QosPolicy,
     publication::DataWriterListener,
     time::{TimerActor, TimerActorMessage},
@@ -194,6 +193,8 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
 #[derive(Debug)]
 pub struct DataWriterActorCreateObject {
     pub writer: Writer,
+    pub discovery: ActorRef<DiscoveryActor>,
+    pub timer: ActorRef<TimerActor>,
 }
 
 #[derive(Debug)]
@@ -215,15 +216,11 @@ impl Actor for DataWriterActor {
         args: Self::Args,
         actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        let DataWriterActorCreateObject { writer } = args;
-
-        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
-        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
+        let DataWriterActorCreateObject {
+            writer,
+            discovery,
+            timer,
+        } = args;
 
         let datawriter_actor = Self {
             writer,

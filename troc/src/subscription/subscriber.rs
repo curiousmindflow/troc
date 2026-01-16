@@ -14,14 +14,12 @@ use troc_core::{
 
 use crate::{
     discovery::{DiscoveryActor, DiscoveryActorMessage},
-    domain::{
-        Configuration, DISCOVERY_ACTOR_NAME, ENTITY_IDENTIFIER_ACTOR_NAME, EntityIdentifierActor,
-        EntityIdentifierActorAskMessage, WIRE_FACTORY_ACTOR_NAME,
-    },
+    domain::{Configuration, EntityIdentifierActor, EntityIdentifierActorAskMessage},
     infrastructure::QosPolicy,
     subscription::{
         DataReader, DataReaderActor, DataReaderActorCreateObject, DataReaderActorMessage,
     },
+    time::TimerActor,
     topic::Topic,
     wires::{
         ReceiverWireFactoryActorMessage, ReceiverWireFactoryActorMessageDestKind, WireFactoryActor,
@@ -33,6 +31,10 @@ pub struct Subscriber {
     guid: Guid,
     qos: QosPolicy,
     subscriber_actor: ActorRef<SubscriberActor>,
+    wire_factory: ActorRef<WireFactoryActor>,
+    discovery: ActorRef<DiscoveryActor>,
+    entity_identifier: ActorRef<EntityIdentifierActor>,
+    timer: ActorRef<TimerActor>,
 }
 
 impl Subscriber {
@@ -43,11 +45,19 @@ impl Subscriber {
         qos: QosPolicy,
         config: Configuration,
         subscriber_actor: ActorRef<SubscriberActor>,
+        wire_factory: ActorRef<WireFactoryActor>,
+        discovery: ActorRef<DiscoveryActor>,
+        entity_identifier: ActorRef<EntityIdentifierActor>,
+        timer: ActorRef<TimerActor>,
     ) -> Self {
         Self {
             guid,
             qos,
             subscriber_actor,
+            wire_factory,
+            discovery,
+            entity_identifier,
+            timer,
         }
     }
 
@@ -67,15 +77,8 @@ impl Subscriber {
     where
         for<'a> T: Deserialize<'a> + Keyed + 'static,
     {
-        let entity_identifier_actore =
-            ActorRef::<EntityIdentifierActor>::lookup(ENTITY_IDENTIFIER_ACTOR_NAME)
-                .unwrap()
-                .unwrap();
-        let wire_factory = ActorRef::<WireFactoryActor>::lookup(WIRE_FACTORY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
-        let writer_key: EntityKey = entity_identifier_actore
+        let writer_key: EntityKey = self
+            .entity_identifier
             .ask(EntityIdentifierActorAskMessage::AskReaderId)
             .await
             .unwrap()
@@ -99,9 +102,12 @@ impl Subscriber {
         let reader_actor = DataReaderActor::spawn(DataReaderActorCreateObject {
             reader,
             data_availability_notifier: data_availability_notifier.clone(),
+            discovery: self.discovery.clone(),
+            timer: self.timer.clone(),
         });
 
-        let (input_wires, locators) = wire_factory
+        let (input_wires, locators) = self
+            .wire_factory
             .ask(ReceiverWireFactoryActorMessage::<DataReaderActor>::new(
                 ReceiverWireFactoryActorMessageDestKind::Applicative,
                 reader_actor.clone(),
@@ -162,7 +168,9 @@ impl Message<SubscriberActorMessage> for SubscriberActor {
 }
 
 #[derive(Debug)]
-pub struct SubscriberActorCreateObject {}
+pub struct SubscriberActorCreateObject {
+    pub discovery: ActorRef<DiscoveryActor>,
+}
 
 #[derive(Debug)]
 pub struct SubscriberActor {
@@ -176,16 +184,12 @@ impl Actor for SubscriberActor {
     type Error = DdsError;
 
     async fn on_start(
-        _args: Self::Args,
+        args: Self::Args,
         _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
         let subscriber_actor = Self {
             readers: Default::default(),
-            discovery,
+            discovery: args.discovery,
         };
 
         Ok(subscriber_actor)

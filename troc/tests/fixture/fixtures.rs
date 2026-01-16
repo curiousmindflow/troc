@@ -91,12 +91,14 @@ pub async fn two_participants(
     let mut alpha_domain_participant = DomainParticipantBuilder::new()
         .with_domain(alpha_domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let mut beta_domain_participant = DomainParticipantBuilder::new()
         .with_domain(beta_domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let topic_name = build_test_topic(topic_name.as_ref());
     let topic =
@@ -145,7 +147,8 @@ pub async fn three_participants(
     let mut alpha_domain_participant = DomainParticipantBuilder::new()
         .with_domain(domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let qos = alpha_domain_participant
         .create_qos_builder()
@@ -183,7 +186,8 @@ pub async fn three_participants(
     let mut beta_domain_participant = DomainParticipantBuilder::new()
         .with_domain(domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let mut beta_subscriber = beta_domain_participant
         .create_subscriber(&qos)
@@ -209,7 +213,8 @@ pub async fn three_participants(
     let mut gamma_domain_participant = DomainParticipantBuilder::new()
         .with_domain(domain_id)
         .with_config(configuration)
-        .build();
+        .build()
+        .await;
 
     let mut gamma_subscriber = gamma_domain_participant
         .create_subscriber(&qos)
