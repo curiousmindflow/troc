@@ -1,0 +1,4 @@
+coverate/** linguist-generated=true
+mutants.out/** linguist-generated=true
+mutants.out.old/** linguist-generated=true
+target/** linguist-generated=true

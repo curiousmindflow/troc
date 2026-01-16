@@ -1,0 +1,449 @@
+use std::{
+    collections::HashMap,
+    marker::PhantomData,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+
+use bytes::BytesMut;
+use kameo::{Actor, actor::ActorRef, prelude::Message};
+use serde::Deserialize;
+use tokio::{
+    runtime::Handle,
+    select,
+    sync::{
+        Notify,
+        mpsc::{Receiver, Sender},
+    },
+    time::sleep,
+};
+use tokio_util::sync::CancellationToken;
+use tracing::{Level, Span, event};
+use troc_core::{
+    CacheChangeContainer, DdsError, Effect, IncommingMessage, OutcommingMessage, Reader,
+    WriterProxy,
+};
+use troc_core::{Effects, Keyed};
+use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
+
+use crate::{
+    discovery::DiscoveryActor,
+    domain::{DISCOVERY_ACTOR_NAME, TIMER_ACTOR_NAME},
+    infrastructure::QosPolicy,
+    subscription::{
+        DataReaderListener, condition::ReadCondition, data_sample::DataSample,
+        sample_info::SampleInfo,
+    },
+    time::{TimerActor, TimerActorMessage},
+    wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage},
+};
+
+#[derive(Debug)]
+pub enum DataReaderProxyCommand {
+    AddProxy {
+        proxy: WriterProxy,
+        emission_infos: Vec<(Locator, Sender<BytesMut>)>,
+    },
+    RemoveProxy {
+        guid: Guid,
+        emission_locators: Vec<Locator>,
+    },
+}
+
+#[derive()]
+pub struct DataReader<T> {
+    guid: Guid,
+    qos: InlineQos,
+    data_reader_actor: ActorRef<DataReaderActor>,
+    data_availability_notifier: Arc<Notify>,
+    phantom: PhantomData<T>,
+}
+
+impl<T> DataReader<T> {
+    pub(crate) async fn new(
+        guid: Guid,
+        qos: QosPolicy,
+        data_reader_actor: ActorRef<DataReaderActor>,
+        data_availability_notifier: Arc<Notify>,
+    ) -> Self {
+        Self {
+            guid,
+            qos: qos.into(),
+            data_reader_actor,
+            data_availability_notifier,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn get_guid(&self) -> Guid {
+        self.guid
+    }
+
+    pub async fn get_listener(&self) -> Option<DataReaderListener> {
+        unimplemented!()
+    }
+
+    pub async fn read_next_sample_raw(&mut self) -> Result<DataSample<SerializedData>, DdsError> {
+        loop {
+            match self
+                .data_reader_actor
+                .ask(DataReaderActorReadOneMessage::Read {})
+                .await
+                .unwrap()
+            {
+                Some(change) => {
+                    let data = change.data.clone();
+                    let infos = SampleInfo::from(&change.infos);
+                    let sample = DataSample::<SerializedData>::new(infos, data);
+                    return Ok(sample);
+                }
+                None => self.data_availability_notifier.notified().await,
+            }
+        }
+    }
+
+    pub async fn read_next_sample_raw_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<DataSample<SerializedData>, DdsError> {
+        match tokio::time::timeout(timeout, self.read_next_sample_raw()).await {
+            Ok(res) => res,
+            Err(e) => Err(DdsError::Timeout {
+                cause: e.to_string(),
+            }),
+        }
+    }
+
+    pub async fn take_next_sample_raw(&mut self) -> Result<DataSample<T>, DdsError> {
+        unimplemented!()
+    }
+
+    pub async fn read_next_sample(&mut self) -> Result<DataSample<T>, DdsError>
+    where
+        for<'a> T: Deserialize<'a> + 'static + Keyed,
+    {
+        let DataSample { infos, data } = self.read_next_sample_raw().await?;
+        let data = if let Some(data) = data {
+            let deserialized_data = cdr::deserialize(data.get_data()).unwrap();
+            Some(deserialized_data)
+        } else {
+            None
+        };
+        let typed_sample = DataSample::<T>::new(infos, data);
+        Ok(typed_sample)
+    }
+
+    pub async fn read_next_sample_timeout(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<DataSample<T>, DdsError>
+    where
+        for<'a> T: Deserialize<'a> + 'static + Keyed,
+    {
+        match tokio::time::timeout(timeout, self.read_next_sample()).await {
+            Ok(res) => res,
+            Err(e) => Err(DdsError::Timeout {
+                cause: e.to_string(),
+            }),
+        }
+    }
+
+    pub async fn read_next_sample_instance_raw(
+        &mut self,
+        key: [u8; 16],
+    ) -> Result<DataSample<Vec<u8>>, DdsError> {
+        unimplemented!()
+    }
+
+    pub async fn read_next_sample_instance(
+        &mut self,
+        key: &impl Keyed,
+    ) -> Result<DataSample<T>, DdsError> {
+        unimplemented!()
+    }
+
+    pub async fn read_next_sample_instance_timeout(
+        &mut self,
+        key: &impl Keyed,
+        timeout: Duration,
+    ) -> Result<DataSample<T>, DdsError> {
+        unimplemented!()
+    }
+
+    pub async fn read(
+        &mut self,
+        max_samples: usize,
+        read_condition: ReadCondition,
+    ) -> Result<Vec<DataSample<T>>, DdsError> {
+        unimplemented!()
+    }
+
+    pub async fn take(
+        &mut self,
+        max_samples: usize,
+        read_condition: ReadCondition,
+    ) -> Result<Vec<DataSample<T>>, DdsError> {
+        unimplemented!()
+    }
+
+    pub async fn read_instance(
+        &mut self,
+        max_samples: usize,
+        read_condition: ReadCondition,
+        instance: impl Keyed,
+    ) -> Result<Vec<DataSample<T>>, DdsError> {
+        unimplemented!()
+    }
+
+    pub async fn take_instance(
+        &mut self,
+        max_samples: usize,
+        read_condition: ReadCondition,
+        instance: impl Keyed,
+    ) -> Result<Vec<DataSample<T>>, DdsError> {
+        unimplemented!()
+    }
+}
+
+#[derive(Debug)]
+pub enum DataReaderActorReadOneMessage {
+    Read {
+        // TODO
+    },
+}
+
+impl Message<DataReaderActorReadOneMessage> for DataReaderActor {
+    type Reply = Option<CacheChangeContainer>;
+
+    async fn handle(
+        &mut self,
+        msg: DataReaderActorReadOneMessage,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        match msg {
+            DataReaderActorReadOneMessage::Read {} => {
+                let a = self.reader.get_first_available_change();
+                a.cloned()
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum DataReaderActorMessage {
+    IncomingMessage {
+        message: BytesMut,
+    },
+    AddProxy {
+        proxy: WriterProxy,
+        wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    },
+    RemoveProxy {
+        guid: Guid,
+        locators: Vec<Locator>,
+    },
+    Tick,
+}
+
+impl Message<DataReaderActorMessage> for DataReaderActor {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: DataReaderActorMessage,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        match msg {
+            DataReaderActorMessage::IncomingMessage { message } => {
+                let message = tokio::task::spawn_blocking(move || {
+                    troc_core::Message::deserialize_from(&message).unwrap()
+                })
+                .await
+                .unwrap();
+                self.reader.ingest(&mut self.effects, message).unwrap()
+            }
+            DataReaderActorMessage::AddProxy { proxy, wires } => {
+                self.output_wires.extend(wires);
+                self.reader.add_proxy(proxy)
+            }
+            DataReaderActorMessage::RemoveProxy { guid, locators } => {
+                for locator in locators {
+                    self.output_wires.remove(&locator);
+                }
+                self.reader.remove_proxy(guid)
+            }
+            DataReaderActorMessage::Tick => self.reader.tick(&mut self.effects),
+        }
+
+        while let Some(effect) = self.effects.pop() {
+            match effect {
+                Effect::DataAvailable => {
+                    self.data_availability_notifier.notify_one();
+                }
+                Effect::Message {
+                    timestamp_millis,
+                    message,
+                    locators,
+                } => {
+                    let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
+                        // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
+                        let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
+                        (nb_bytes, emission_buffer)
+                    })
+                    .await
+                    .unwrap();
+                    for locator in locators.iter() {
+                        if let Some(actor) = self.output_wires.get(locator) {
+                            actor
+                                .tell(SenderWireActorMessage {
+                                    buffer: message.clone(),
+                                })
+                                .await
+                                .unwrap();
+                        }
+                    }
+                }
+                Effect::ScheduleTick { delay } => {
+                    self.timer
+                        .tell(TimerActorMessage::ScheduleReaderTick {
+                            delay,
+                            target: ctx.actor_ref().clone(),
+                        })
+                        .await
+                        .unwrap();
+                }
+                Effect::Qos => todo!(),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DataReaderActorCreateObject {
+    pub reader: Reader,
+    pub input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    pub data_availability_notifier: Arc<Notify>,
+}
+
+#[derive(Debug)]
+pub struct DataReaderActor {
+    reader: Reader,
+    effects: Effects,
+    discovery: ActorRef<DiscoveryActor>,
+    timer: ActorRef<TimerActor>,
+    input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    data_availability_notifier: Arc<Notify>,
+}
+
+impl Actor for DataReaderActor {
+    type Args = DataReaderActorCreateObject;
+
+    type Error = DdsError;
+
+    async fn on_start(
+        args: Self::Args,
+        actor_ref: kameo::prelude::ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        let DataReaderActorCreateObject {
+            reader,
+            input_wires,
+            data_availability_notifier,
+        } = args;
+
+        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
+            .unwrap()
+            .unwrap();
+
+        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
+            .unwrap()
+            .unwrap();
+
+        let datawriter_actor = Self {
+            reader,
+            effects: Effects::default(),
+            discovery,
+            timer,
+            input_wires,
+            output_wires: Default::default(),
+            data_availability_notifier,
+        };
+
+        Ok(datawriter_actor)
+    }
+
+    async fn on_stop(
+        &mut self,
+        actor_ref: kameo::prelude::WeakActorRef<Self>,
+        reason: kameo::prelude::ActorStopReason,
+    ) -> Result<(), Self::Error> {
+        // TODO: must tell discovery
+        todo!()
+    }
+}
+
+impl Sendable for DataReaderActor {
+    type Msg = DataReaderActorMessage;
+
+    fn build_message(buffer: BytesMut) -> Self::Msg {
+        todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        marker::PhantomData,
+        str::FromStr,
+        sync::{Arc, Mutex},
+    };
+
+    use rstest::*;
+    use tokio::sync::mpsc::channel;
+    use tokio_util::sync::CancellationToken;
+    use troc_core::{Guid, InlineQos, Locator};
+    use troc_core::{ReaderBuilder, ReaderConfiguration};
+
+    use crate::{domain::Configuration, subscription::datareader::DataReader};
+
+    // #[fixture]
+    // fn new() -> DataReader<()> {
+    //     let guid = Guid::default();
+    //     let qos = InlineQos::default();
+    //     let config = ReaderConfiguration::default();
+    //     let change_availability_adapter = ChangeAvailabilityAdapter::new();
+    //     let (ack_adapter_sender, ack_adapter_receiver) =
+    //         AckScheduleAdapterBuilder::create_endpoints();
+    //     let reader = ReaderBuilder::new(
+    //         guid,
+    //         qos.clone(),
+    //         Box::new(change_availability_adapter.clone()),
+    //         config,
+    //     )
+    //     .ack_schedule_adapter(ack_adapter_sender)
+    //     .build();
+    //     // TODO: the 'discovery_command_sender' comes from Discovery in practice
+    //     let (discovery_command_sender, discovery_command_receiver) = channel(1024);
+    //     let datareader = DataReader {
+    //         guid,
+    //         qos,
+    //         listener: false,
+    //         reader: Arc::new(Mutex::new(reader)),
+    //         cancellation_token: CancellationToken::new(),
+    //         change_availability_adapter,
+    //         emission_infos_storage: EmissionInfosStorage::new(),
+    //         phantom: PhantomData,
+    //     };
+    //     datareader
+    //         .launch_management_and_timer_task(ack_adapter_receiver, discovery_command_receiver);
+    //     let wire_factory = WireFactory::new(0, Configuration::default());
+    //     let locator = Locator::from_str("127.0.0.1:65000:UDPV4").unwrap();
+    //     let wire = wire_factory
+    //         .build_listener_wire_from_locator(&locator)
+    //         .unwrap();
+    //     datareader.incomming_task(wire);
+    //     datareader
+    // }
+}

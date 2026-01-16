@@ -1,0 +1,22 @@
+[package]
+name = "troc-derive"
+version = "0.0.1"
+description = "DDS key derive macro"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+proc-macro2 = "1.0.69"
+quote = "1.0.33"
+syn = "2.0.94"
+md5.workspace = true
+
+[dev-dependencies]
+troc-core = { path = "../troc-core" }
+cdr = "0.2.4"
+
+[lib]
+proc-macro = true

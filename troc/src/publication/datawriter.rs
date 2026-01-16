@@ -1,0 +1,281 @@
+use std::{collections::HashMap, marker::PhantomData};
+
+use crate::{
+    discovery::DiscoveryActor,
+    domain::{DISCOVERY_ACTOR_NAME, TIMER_ACTOR_NAME},
+    infrastructure::QosPolicy,
+    publication::DataWriterListener,
+    time::{TimerActor, TimerActorMessage},
+    wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage},
+};
+use bytes::BytesMut;
+use kameo::{Actor, actor::ActorRef, prelude::Message};
+use serde::Serialize;
+
+use tracing::{Level, event};
+use troc_core::{
+    ChangeKind, Guid, InlineQos, InstanceHandle, Locator, SequenceNumber, SerializedData, cdr,
+};
+use troc_core::{
+    DdsError, Effect, ReaderProxy, Writer,
+    cdr::{CdrLe, Infinite},
+};
+use troc_core::{Effects, Keyed};
+
+#[derive(Debug)]
+pub struct DataWriter<T> {
+    guid: Guid,
+    qos: InlineQos,
+    data_writer_actor: ActorRef<DataWriterActor>,
+    phantom: PhantomData<T>,
+}
+
+impl<T> DataWriter<T> {
+    pub(crate) async fn new(
+        guid: Guid,
+        qos: QosPolicy,
+        data_writer_actor: ActorRef<DataWriterActor>,
+    ) -> Self {
+        Self {
+            guid,
+            qos: qos.into(),
+            data_writer_actor,
+            phantom: PhantomData,
+        }
+    }
+
+    pub fn get_guid(&self) -> Guid {
+        self.guid
+    }
+
+    pub async fn get_listener(&self) -> Option<DataWriterListener> {
+        unimplemented!()
+    }
+
+    pub async fn write(&mut self, data: T) -> Result<SequenceNumber, DdsError>
+    where
+        T: Serialize + Keyed,
+    {
+        let key = data.key().unwrap();
+        let data = cdr::serialize::<_, _, CdrLe>(&data, Infinite).unwrap();
+        let data = SerializedData::from_vec(data);
+        self.write_raw(data, InstanceHandle(key)).await
+    }
+
+    pub async fn write_raw(
+        &mut self,
+        data: SerializedData,
+        key: InstanceHandle,
+    ) -> Result<SequenceNumber, DdsError> {
+        self.data_writer_actor
+            .tell(DataWriterActorMessage::Write {
+                data,
+                instance: key,
+            })
+            .await
+            .unwrap();
+        todo!()
+    }
+
+    // TODO: should not be used
+    // instead leverages the QoS
+    pub async fn remove_sample(&self, sequence: SequenceNumber) {
+        unimplemented!()
+    }
+}
+
+#[derive(Debug)]
+pub enum DataWriterActorMessage {
+    Write {
+        data: SerializedData,
+        instance: InstanceHandle,
+    },
+    IncomingMessage {
+        message: BytesMut,
+    },
+    AddProxy {
+        proxy: ReaderProxy,
+        wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    },
+    RemoveProxy {
+        guid: Guid,
+        locators: Vec<Locator>,
+    },
+    Tick,
+}
+
+impl Message<DataWriterActorMessage> for DataWriterActor {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: DataWriterActorMessage,
+        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        match msg {
+            DataWriterActorMessage::Write { data, instance } => {
+                let change = self
+                    .writer
+                    .new_change(ChangeKind::Alive, Some(data), None, instance);
+                self.writer.add_change(&mut self.effects, change).unwrap();
+            }
+            DataWriterActorMessage::IncomingMessage { message } => {
+                let message = tokio::task::spawn_blocking(move || {
+                    troc_core::Message::deserialize_from(&message).unwrap()
+                })
+                .await
+                .unwrap();
+                self.writer.ingest(&mut self.effects, message).unwrap()
+            }
+            DataWriterActorMessage::AddProxy { proxy, wires } => {
+                self.output_wires.extend(wires);
+                self.writer.add_proxy(proxy)
+            }
+            DataWriterActorMessage::RemoveProxy { guid, locators } => {
+                for locator in locators {
+                    self.output_wires.remove(&locator);
+                }
+                self.writer.remove_proxy(guid)
+            }
+            DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects),
+        }
+
+        while let Some(effect) = self.effects.pop() {
+            match effect {
+                Effect::Message {
+                    timestamp_millis,
+                    message,
+                    locators,
+                } => {
+                    let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
+                        // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
+                        let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
+                        (nb_bytes, emission_buffer)
+                    })
+                    .await
+                    .unwrap();
+                    for locator in locators.iter() {
+                        if let Some(actor) = self.output_wires.get(locator) {
+                            actor
+                                .tell(SenderWireActorMessage {
+                                    buffer: message.clone(),
+                                })
+                                .await
+                                .unwrap();
+                        }
+                    }
+                }
+                Effect::ScheduleTick { delay } => {
+                    self.timer
+                        .tell(TimerActorMessage::ScheduleWriterTick {
+                            delay,
+                            target: ctx.actor_ref().clone(),
+                        })
+                        .await
+                        .unwrap();
+                }
+                Effect::Qos => todo!(),
+                _ => unreachable!(),
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DataWriterActorCreateObject {
+    pub writer: Writer,
+    pub input_wires: Vec<ActorRef<ReceiverWireActor>>,
+}
+
+#[derive(Debug)]
+pub struct DataWriterActor {
+    writer: Writer,
+    effects: Effects,
+    discovery: ActorRef<DiscoveryActor>,
+    timer: ActorRef<TimerActor>,
+    input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+}
+
+impl Actor for DataWriterActor {
+    type Args = DataWriterActorCreateObject;
+
+    type Error = DdsError;
+
+    async fn on_start(
+        args: Self::Args,
+        actor_ref: kameo::prelude::ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        let DataWriterActorCreateObject {
+            writer,
+            input_wires,
+        } = args;
+
+        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
+            .unwrap()
+            .unwrap();
+
+        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
+            .unwrap()
+            .unwrap();
+
+        let datawriter_actor = Self {
+            writer,
+            effects: Effects::default(),
+            discovery,
+            timer,
+            input_wires,
+            output_wires: Default::default(),
+        };
+
+        Ok(datawriter_actor)
+    }
+
+    async fn on_stop(
+        &mut self,
+        actor_ref: kameo::prelude::WeakActorRef<Self>,
+        reason: kameo::prelude::ActorStopReason,
+    ) -> Result<(), Self::Error> {
+        // TODO: must tell discovery
+        todo!()
+    }
+}
+
+impl Sendable for DataWriterActor {
+    type Msg = DataWriterActorMessage;
+
+    fn build_message(buffer: BytesMut) -> Self::Msg {
+        todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use rstest::*;
+    use tokio::sync::mpsc::channel;
+    use troc_core::{Guid, Locator};
+
+    use crate::{
+        domain::Configuration, infrastructure::QosPolicy, publication::datawriter::DataWriter,
+    };
+
+    // #[fixture]
+    // async fn new() -> DataWriter<()> {
+    //     let guid = Guid::default();
+    //     let qos = QosPolicy::default();
+
+    //     let (endpoint_lifecycle_sender, _endpoint_lifecycle_receiver) = channel(1024);
+    //     let datawriter = DataWriter::new(guid, qos, endpoint_lifecycle_sender).await;
+
+    //     let wire_factory = WireFactory::new(0, Configuration::default());
+    //     let locator = Locator::from_str("127.0.0.1:65000:UDPV4").unwrap();
+    //     let wire = wire_factory
+    //         .build_listener_wire_from_locator(&locator)
+    //         .unwrap();
+    //     datawriter.incomming_task(wire);
+    //     datawriter
+    // }
+}

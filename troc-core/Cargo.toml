@@ -1,0 +1,57 @@
+[package]
+name = "troc-core"
+version = "0.1.0"
+description = "Core DDS logic using sans-io"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+thiserror = "2.0.16"
+anyhow = "1.0.100"
+itertools = "0.14.0"
+tracing = "0.1.41"
+contracts = "0.6.6"
+
+# crates below should be removed at one point
+# protocol crate should not need to know the "wire layout" of the types
+binrw = "0.15.0"
+serde = { version = "1.0.137", features = ["derive"] }
+cdr = "0.2.4"
+chrono = { version = "0.4.41", features = [
+    "alloc",
+    "clock",
+    "now",
+    "std",
+    "serde"
+], default-features = false }
+bytes = "1.8.0"
+bit-vec = { version = "0.8.0", features = ["serde"] }
+modular-bitfield = "0.11.2"
+regex = "1.8.4"
+bit_reverse = "0.1.8"
+rand = "0.8.5"
+to-binary = "0.4.0"
+pretty-hex = "0.4.1"
+
+[dev-dependencies]
+rstest = "0.26.1"
+rstest_reuse = "0.7.0"
+proptest = "1.5.0"
+criterion = { version = "0.5.1", features = ["async_tokio"] }
+pprof = { version = "0.13.0", features = ["criterion", "flamegraph"] }
+tokio-util = { version = "0.7.7", features = ["codec"] }
+
+[[bench]]
+name = "main"
+harness = false
+
+[[bin]]
+name = "encode"
+path = "benches/encode.rs"
+
+[[bin]]
+name = "decode"
+path = "benches/decode.rs"

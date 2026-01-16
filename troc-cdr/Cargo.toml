@@ -1,0 +1,11 @@
+[package]
+name = "troc-cdr"
+version = "0.1.0"
+description = "CDR (de)serialization"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]

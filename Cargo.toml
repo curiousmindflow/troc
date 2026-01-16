@@ -1,0 +1,14 @@
+[workspace]
+members = ["troc", "troc-core", "troc-derive"]
+resolver = "2"
+default-members = ["troc"]
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/curiousmindflow/troc"
+keywords = ["dds", "networking", "sans-io", "pubsub"]
+categories = ["network-programming"]
+
+[workspace.dependencies]
+md5 = "0.7.0"
