@@ -120,62 +120,55 @@ impl UdpV4Wire {
 impl Wired for UdpV4Wire {
     #[instrument(level = "TRACE", skip_all)]
     async fn recv(&mut self) -> Result<BytesMut, WireError> {
-        // loop {
-        //     self.socket.readable().await?;
+        loop {
+            self.socket.readable().await?;
 
-        //     match self.socket.try_recv_buf(&mut self.buffer) {
-        //         Ok(nb_bytes) => {
-        //             if nb_bytes == 0 {
-        //                 event!(Level::WARN, "Udp packet is empty");
-        //                 continue;
-        //             }
-
-        //             let msg = Message::decode(&mut self.buffer[..nb_bytes])
-        //                 .map_err(|e| WireError::ReceptionError(e.to_string()))?;
-
-        //             self.buffer.clear();
-        //             break Ok(msg);
-        //         }
-        //         Err(e) => match e.kind() {
-        //             std::io::ErrorKind::WouldBlock => continue,
-        //             _ => {
-        //                 self.buffer.clear();
-        //                 break Err(WireError::ReceptionError(e.to_string()));
-        //             }
-        //         },
-        //     }
-        // }
-        todo!()
+            match self.socket.try_recv_buf(&mut self.buffer) {
+                Ok(nb_bytes) => {
+                    if nb_bytes == 0 {
+                        event!(Level::WARN, "Udp packet is empty");
+                        continue;
+                    }
+                    let msg = BytesMut::from_iter(&self.buffer);
+                    self.buffer.clear();
+                    break Ok(msg);
+                }
+                Err(e) => match e.kind() {
+                    std::io::ErrorKind::WouldBlock => continue,
+                    _ => {
+                        self.buffer.clear();
+                        break Err(WireError::ReceptionError(e.to_string()));
+                    }
+                },
+            }
+        }
     }
 
     #[instrument(level = "TRACE", skip_all)]
     async fn send(&mut self, msg: BytesMut) -> Result<(), WireError> {
-        // Message::encode(msg, &mut self.buffer).map_err(|e| WireError::SendError(e.to_string()))?;
+        loop {
+            self.socket.writable().await?;
 
-        // loop {
-        //     self.socket.writable().await?;
+            // self.bucket
+            //     .until_n_ready(NonZeroU32::new(msg.len() as u32).unwrap())
+            //     .await
+            //     .unwrap();
+            // sleep(Duration::from_micros(50)).await;
 
-        //     self.bucket
-        //         .until_n_ready(NonZeroU32::new(self.buffer.len() as u32).unwrap())
-        //         .await
-        //         .unwrap();
-        //     // sleep(Duration::from_micros(50)).await;
-
-        //     match self.socket.try_send(&self.buffer) {
-        //         Ok(_nb_bytes) => {
-        //             self.buffer.clear();
-        //             break Ok(());
-        //         }
-        //         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-        //             continue;
-        //         }
-        //         Err(e) => {
-        //             self.buffer.clear();
-        //             break Err(WireError::SendError(e.to_string()));
-        //         }
-        //     }
-        // }
-        todo!()
+            match self.socket.try_send(&msg) {
+                Ok(_nb_bytes) => {
+                    self.buffer.clear();
+                    break Ok(());
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => {
+                    self.buffer.clear();
+                    break Err(WireError::SendError(e.to_string()));
+                }
+            }
+        }
     }
 
     fn transmission_kind(&self) -> TransmissionKind {

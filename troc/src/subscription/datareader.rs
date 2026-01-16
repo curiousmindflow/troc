@@ -20,8 +20,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span, event};
 use troc_core::{
-    CacheChangeContainer, DdsError, Effect, IncommingMessage, OutcommingMessage, Reader,
-    WriterProxy,
+    CacheChangeContainer, DdsError, Effect, IncommingMessage, LocatorList, OutcommingMessage,
+    Reader, WriterProxy,
 };
 use troc_core::{Effects, Keyed};
 use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
@@ -243,6 +243,10 @@ pub enum DataReaderActorMessage {
         locators: Vec<Locator>,
     },
     Tick,
+    AddInputWire {
+        wires: Vec<ActorRef<ReceiverWireActor<DataReaderActor>>>,
+        locators: LocatorList,
+    },
 }
 
 impl Message<DataReaderActorMessage> for DataReaderActor {
@@ -273,6 +277,10 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                 self.reader.remove_proxy(guid)
             }
             DataReaderActorMessage::Tick => self.reader.tick(&mut self.effects),
+            DataReaderActorMessage::AddInputWire { wires, locators } => {
+                self.input_wires.extend(wires);
+                self.reader.add_unicast_locators(locators);
+            }
         }
 
         while let Some(effect) = self.effects.pop() {
@@ -323,7 +331,6 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
 #[derive(Debug)]
 pub struct DataReaderActorCreateObject {
     pub reader: Reader,
-    pub input_wires: Vec<ActorRef<ReceiverWireActor>>,
     pub data_availability_notifier: Arc<Notify>,
 }
 
@@ -333,7 +340,7 @@ pub struct DataReaderActor {
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
-    input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    input_wires: Vec<ActorRef<ReceiverWireActor<DataReaderActor>>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
     data_availability_notifier: Arc<Notify>,
 }
@@ -349,7 +356,6 @@ impl Actor for DataReaderActor {
     ) -> Result<Self, Self::Error> {
         let DataReaderActorCreateObject {
             reader,
-            input_wires,
             data_availability_notifier,
         } = args;
 
@@ -366,7 +372,7 @@ impl Actor for DataReaderActor {
             effects: Effects::default(),
             discovery,
             timer,
-            input_wires,
+            input_wires: Default::default(),
             output_wires: Default::default(),
             data_availability_notifier,
         };
@@ -388,7 +394,7 @@ impl Sendable for DataReaderActor {
     type Msg = DataReaderActorMessage;
 
     fn build_message(buffer: BytesMut) -> Self::Msg {
-        todo!()
+        DataReaderActorMessage::IncomingMessage { message: buffer }
     }
 }
 

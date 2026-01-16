@@ -9,17 +9,19 @@ use serde::Deserialize;
 use tokio::sync::Notify;
 use troc_core::{
     DdsError, EntityId, EntityKey, Guid, GuidPrefix, Keyed, LocatorList, ReaderBuilder,
-    ReaderConfiguration, ReaderProxy, TopicKind,
+    ReaderProxy, TopicKind,
 };
 
 use crate::{
-    discovery::DiscoveryActor,
+    discovery::{DiscoveryActor, DiscoveryActorMessage},
     domain::{
-        Configuration, ENTITY_IDENTIFIER_ACTOR_NAME, EntityIdentifierActor,
+        Configuration, DISCOVERY_ACTOR_NAME, ENTITY_IDENTIFIER_ACTOR_NAME, EntityIdentifierActor,
         EntityIdentifierActorAskMessage, WIRE_FACTORY_ACTOR_NAME,
     },
     infrastructure::QosPolicy,
-    subscription::{DataReader, DataReaderActor, DataReaderActorCreateObject},
+    subscription::{
+        DataReader, DataReaderActor, DataReaderActorCreateObject, DataReaderActorMessage,
+    },
     topic::Topic,
     wires::{
         ReceiverWireFactoryActorMessage, ReceiverWireFactoryActorMessageDestKind, WireFactoryActor,
@@ -88,15 +90,7 @@ impl Subscriber {
 
         let reliable = qos.reliability().into();
 
-        let (input_wires, locators) = wire_factory
-            .ask(ReceiverWireFactoryActorMessage::<DataReaderActor>::new(
-                ReceiverWireFactoryActorMessageDestKind::Applicative,
-            ))
-            .await
-            .unwrap();
-
         let reader = ReaderBuilder::new(reader_guid, (*qos).into())
-            .with_unicast_locators(locators)
             .reliability(reliable)
             .build();
         let reader_proxy = reader.extract_proxy();
@@ -104,9 +98,16 @@ impl Subscriber {
         let data_availability_notifier = Arc::new(Notify::new());
         let reader_actor = DataReaderActor::spawn(DataReaderActorCreateObject {
             reader,
-            input_wires,
             data_availability_notifier: data_availability_notifier.clone(),
         });
+
+        let (input_wires, locators) = wire_factory
+            .ask(ReceiverWireFactoryActorMessage::<DataReaderActor>::new(
+                ReceiverWireFactoryActorMessageDestKind::Applicative,
+                reader_actor.clone(),
+            ))
+            .await
+            .unwrap();
 
         let datareader = DataReader::new(
             reader_guid,
@@ -115,6 +116,14 @@ impl Subscriber {
             data_availability_notifier,
         )
         .await;
+
+        reader_actor
+            .ask(DataReaderActorMessage::AddInputWire {
+                wires: input_wires,
+                locators,
+            })
+            .await
+            .unwrap();
 
         self.subscriber_actor
             .ask(SubscriberActorMessage {
@@ -143,7 +152,12 @@ impl Message<SubscriberActorMessage> for SubscriberActor {
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         self.readers.push(msg.writer);
-        // TODO: send info to Discovery
+        self.discovery
+            .ask(DiscoveryActorMessage::ReaderCreated {
+                reader_proxy: msg.proxy,
+            })
+            .await
+            .unwrap();
     }
 }
 
@@ -153,6 +167,7 @@ pub struct SubscriberActorCreateObject {}
 #[derive(Debug)]
 pub struct SubscriberActor {
     readers: Vec<ActorRef<DataReaderActor>>,
+    discovery: ActorRef<DiscoveryActor>,
 }
 
 impl Actor for SubscriberActor {
@@ -164,8 +179,13 @@ impl Actor for SubscriberActor {
         _args: Self::Args,
         _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
+        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
+            .unwrap()
+            .unwrap();
+
         let subscriber_actor = Self {
             readers: Default::default(),
+            discovery,
         };
 
         Ok(subscriber_actor)

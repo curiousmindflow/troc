@@ -367,6 +367,14 @@ impl Writer {
         self.matched_readers.contains_key(&proxy_guid)
     }
 
+    pub fn add_unicast_locators(&mut self, mut locators: LocatorList) {
+        self.unicast_locator_list.append(&mut locators);
+    }
+
+    pub fn add_multicast_locators(&mut self, mut locators: LocatorList) {
+        self.multicast_locator_list.append(&mut locators);
+    }
+
     fn produce_data(
         &mut self,
         sequence: SequenceNumber,

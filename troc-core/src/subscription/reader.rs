@@ -480,6 +480,14 @@ impl Reader {
         self.matched_writers.contains_key(&proxy_guid)
     }
 
+    pub fn add_unicast_locators(&mut self, mut locators: LocatorList) {
+        self.unicast_locator_list.append(&mut locators);
+    }
+
+    pub fn add_multicast_locators(&mut self, mut locators: LocatorList) {
+        self.multicast_locator_list.append(&mut locators);
+    }
+
     fn has_unreaded_available_change(&self) -> bool {
         self.iter_all_available_changes(SampleStateKind::NotRead)
             .count()

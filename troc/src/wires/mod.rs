@@ -11,7 +11,7 @@ pub use wire::*;
 pub use wire_factory::{
     ReceiverWireActor, ReceiverWireFactoryActorMessage, ReceiverWireFactoryActorMessageDestKind,
     Sendable, SenderWireActor, SenderWireActorMessage, SenderWireFactoryActorMessage,
-    WireActorReply, WireFactoryActor,
+    WireFactoryActor,
 };
 
 // #[cfg(test)]

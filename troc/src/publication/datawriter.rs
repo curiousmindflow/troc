@@ -14,7 +14,8 @@ use serde::Serialize;
 
 use tracing::{Level, event};
 use troc_core::{
-    ChangeKind, Guid, InlineQos, InstanceHandle, Locator, SequenceNumber, SerializedData, cdr,
+    ChangeKind, Guid, InlineQos, InstanceHandle, Locator, LocatorList, SequenceNumber,
+    SerializedData, cdr,
 };
 use troc_core::{
     DdsError, Effect, ReaderProxy, Writer,
@@ -102,6 +103,10 @@ pub enum DataWriterActorMessage {
         locators: Vec<Locator>,
     },
     Tick,
+    AddInputWire {
+        wires: Vec<ActorRef<ReceiverWireActor<DataWriterActor>>>,
+        locators: LocatorList,
+    },
 }
 
 impl Message<DataWriterActorMessage> for DataWriterActor {
@@ -138,6 +143,10 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 self.writer.remove_proxy(guid)
             }
             DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects),
+            DataWriterActorMessage::AddInputWire { wires, locators } => {
+                self.input_wires.extend(wires);
+                self.writer.add_unicast_locators(locators);
+            }
         }
 
         while let Some(effect) = self.effects.pop() {
@@ -185,7 +194,6 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
 #[derive(Debug)]
 pub struct DataWriterActorCreateObject {
     pub writer: Writer,
-    pub input_wires: Vec<ActorRef<ReceiverWireActor>>,
 }
 
 #[derive(Debug)]
@@ -194,7 +202,7 @@ pub struct DataWriterActor {
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
-    input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    input_wires: Vec<ActorRef<ReceiverWireActor<DataWriterActor>>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
 }
 
@@ -207,10 +215,7 @@ impl Actor for DataWriterActor {
         args: Self::Args,
         actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        let DataWriterActorCreateObject {
-            writer,
-            input_wires,
-        } = args;
+        let DataWriterActorCreateObject { writer } = args;
 
         let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
             .unwrap()
@@ -225,7 +230,7 @@ impl Actor for DataWriterActor {
             effects: Effects::default(),
             discovery,
             timer,
-            input_wires,
+            input_wires: Default::default(),
             output_wires: Default::default(),
         };
 
@@ -246,7 +251,7 @@ impl Sendable for DataWriterActor {
     type Msg = DataWriterActorMessage;
 
     fn build_message(buffer: BytesMut) -> Self::Msg {
-        todo!()
+        DataWriterActorMessage::IncomingMessage { message: buffer }
     }
 }
 

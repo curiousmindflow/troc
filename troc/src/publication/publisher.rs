@@ -7,7 +7,6 @@ use troc_core::DdsError;
 use troc_core::EntityKey;
 use troc_core::Keyed;
 use troc_core::WriterBuilder;
-use troc_core::WriterConfiguration;
 use troc_core::WriterProxy;
 use troc_core::{EntityId, Guid, GuidPrefix, LocatorList, TopicKind};
 
@@ -18,6 +17,7 @@ use crate::domain::ENTITY_IDENTIFIER_ACTOR_NAME;
 use crate::domain::EntityIdentifierActorAskMessage;
 use crate::domain::WIRE_FACTORY_ACTOR_NAME;
 use crate::publication::DataWriterActor;
+use crate::publication::DataWriterActorMessage;
 use crate::publication::datawriter::DataWriterActorCreateObject;
 use crate::wires::ReceiverWireFactoryActorMessage;
 use crate::wires::ReceiverWireFactoryActorMessageDestKind;
@@ -91,25 +91,29 @@ impl Publisher {
 
         let reliable = qos.reliability().into();
 
+        let writer = WriterBuilder::new(writer_guid, (*qos).into())
+            .reliability(reliable)
+            .build();
+        let writer_proxy = writer.extract_proxy();
+        let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject { writer });
+
         let (input_wires, locators) = wire_factory
             .ask(ReceiverWireFactoryActorMessage::<DataWriterActor>::new(
                 ReceiverWireFactoryActorMessageDestKind::Applicative,
+                writer_actor.clone(),
             ))
             .await
             .unwrap();
 
-        let writer = WriterBuilder::new(writer_guid, (*qos).into())
-            .with_unicast_locators(locators)
-            .reliability(reliable)
-            .build();
-        let writer_proxy = writer.extract_proxy();
-
-        let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject {
-            writer,
-            input_wires,
-        });
-
         let datawriter = DataWriter::new(writer_guid, *qos, writer_actor.clone()).await;
+
+        writer_actor
+            .ask(DataWriterActorMessage::AddInputWire {
+                wires: input_wires,
+                locators,
+            })
+            .await
+            .unwrap();
 
         self.publisher_actor
             .ask(PublisherActorMessage {

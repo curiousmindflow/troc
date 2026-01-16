@@ -20,12 +20,24 @@ use crate::wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActor
 #[derive(Debug)]
 pub enum DiscoveryActorMessage {
     ParticipantProxyChanged(ParticipantProxy),
-    WriterCreated { writer_proxy: WriterProxy },
+    WriterCreated {
+        writer_proxy: WriterProxy,
+    },
     WriterRemoved(EntityId),
-    ReaderCreated { reader_proxy: ReaderProxy },
+    ReaderCreated {
+        reader_proxy: ReaderProxy,
+    },
     ReaderRemoved(EntityId),
     Tick,
-    IncomingMessage { message: BytesMut },
+    IncomingMessage {
+        message: BytesMut,
+    },
+    AddInputWire {
+        wires: Vec<ActorRef<ReceiverWireActor<DiscoveryActor>>>,
+    },
+    AddOutputWires {
+        wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    },
 }
 
 impl Message<DiscoveryActorMessage> for DiscoveryActor {
@@ -70,6 +82,12 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                 self.discovery
                     .ingest(&mut self.effects, message, now)
                     .unwrap()
+            }
+            DiscoveryActorMessage::AddInputWire { wires } => {
+                self.input_wires.extend(wires);
+            }
+            DiscoveryActorMessage::AddOutputWires { wires } => {
+                self.output_wires.extend(wires);
             }
         }
 
@@ -150,8 +168,6 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
 pub struct DiscoveryActorCreateObject {
     pub discovery: ProtocolDiscovery,
     pub event_sender: Sender<ParticipantEvent>,
-    pub input_wires: Vec<ActorRef<ReceiverWireActor>>,
-    pub output_wires: Vec<ActorRef<SenderWireActor>>,
 }
 
 #[derive()]
@@ -160,7 +176,7 @@ pub struct DiscoveryActor {
     effects: Effects,
     timer: ActorRef<TimerActor>,
     event_sender: Sender<ParticipantEvent>,
-    input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    input_wires: Vec<ActorRef<ReceiverWireActor<DiscoveryActor>>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
 }
 
@@ -171,7 +187,7 @@ impl Actor for DiscoveryActor {
 
     async fn on_start(
         args: Self::Args,
-        actor_ref: kameo::prelude::ActorRef<Self>,
+        _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
         let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
             .unwrap()
@@ -181,7 +197,7 @@ impl Actor for DiscoveryActor {
             effects: Effects::default(),
             timer,
             event_sender: args.event_sender,
-            input_wires: args.input_wires,
+            input_wires: Default::default(),
             output_wires: Default::default(),
         };
         Ok(actor)

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use kameo::Actor;
 use kameo::actor::{ActorRef, Spawn};
 use kameo::prelude::Message;
@@ -304,6 +306,23 @@ impl Actor for DomainParticipantActor {
         wire_factory.register(WIRE_FACTORY_ACTOR_NAME).unwrap();
         actor_ref.link(&wire_factory).await;
         let (event_sender, _) = channel(64);
+        let discovery_configuration = DiscoveryConfiguration::new();
+        let discovery =
+            DiscoveryBuilder::new(args.guid.get_guid_prefix(), discovery_configuration).build();
+
+        let discovery = DiscoveryActor::spawn(DiscoveryActorCreateObject {
+            discovery,
+            event_sender: event_sender.clone(),
+        });
+        discovery.wait_for_startup().await;
+        discovery.register(DISCOVERY_ACTOR_NAME).unwrap();
+        actor_ref.link(&discovery).await;
+        let entity_identifier = EntityIdentifierActor::spawn(());
+        entity_identifier.wait_for_startup().await;
+        entity_identifier
+            .register(ENTITY_IDENTIFIER_ACTOR_NAME)
+            .unwrap();
+        actor_ref.link(&entity_identifier).await;
 
         let mut endpoint_set = BuiltinEndpointSet::new();
         endpoint_set.set_disc_builtin_endpoint_participant_announcer(1);
@@ -320,6 +339,7 @@ impl Actor for DomainParticipantActor {
         let (receiver_many_to_many, receiver_locators_many_to_many) = wire_factory
             .ask(ReceiverWireFactoryActorMessage::<DiscoveryActor>::new(
                 ReceiverWireFactoryActorMessageDestKind::SPDP,
+                discovery.clone(),
             ))
             .await
             .unwrap();
@@ -327,6 +347,7 @@ impl Actor for DomainParticipantActor {
         let (receiver_on_to_one, receiver_locators_on_to_one) = wire_factory
             .ask(ReceiverWireFactoryActorMessage::<DiscoveryActor>::new(
                 ReceiverWireFactoryActorMessageDestKind::SEDP,
+                discovery.clone(),
             ))
             .await
             .unwrap();
@@ -338,6 +359,13 @@ impl Actor for DomainParticipantActor {
             .await
             .unwrap();
         output_wires.extend(sender_many_to_many);
+
+        let output_wires = HashMap::from_iter(
+            sender_locators_many_to_many
+                .iter()
+                .zip(output_wires)
+                .map(|(a, b)| (*a, b)),
+        );
 
         let metatraffic_unicast_locator_list = receiver_locators_on_to_one;
         let metatraffic_multicast_locator_list =
@@ -356,25 +384,17 @@ impl Actor for DomainParticipantActor {
             BuiltinEndpointQos::default(),
         );
 
-        let discovery_configuration = DiscoveryConfiguration::new();
-        let discovery =
-            DiscoveryBuilder::new(infos.get_guid_prefix(), discovery_configuration).build();
-
-        let discovery = DiscoveryActor::spawn(DiscoveryActorCreateObject {
-            discovery,
-            event_sender: event_sender.clone(),
-            input_wires,
-            output_wires,
-        });
-        discovery.wait_for_startup().await;
-        discovery.register(DISCOVERY_ACTOR_NAME).unwrap();
-        actor_ref.link(&discovery).await;
-        let entity_identifier = EntityIdentifierActor::spawn(());
-        entity_identifier.wait_for_startup().await;
-        entity_identifier
-            .register(ENTITY_IDENTIFIER_ACTOR_NAME)
+        discovery
+            .ask(DiscoveryActorMessage::AddInputWire { wires: input_wires })
+            .await
             .unwrap();
-        actor_ref.link(&entity_identifier).await;
+
+        discovery
+            .ask(DiscoveryActorMessage::AddOutputWires {
+                wires: output_wires,
+            })
+            .await
+            .unwrap();
 
         discovery
             .tell(DiscoveryActorMessage::ParticipantProxyChanged(
