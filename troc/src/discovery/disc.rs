@@ -99,7 +99,9 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                 } => {
                     let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
                         // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
-                        let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        // FIXME: line above lead to crash because of "failed to fill whole buffer", crash happend at serialization, one line below
+                        // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        let mut emission_buffer = BytesMut::zeroed(65 * 1024);
                         let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
                         (nb_bytes, emission_buffer)
                     })

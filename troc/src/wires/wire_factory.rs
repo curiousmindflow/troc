@@ -94,7 +94,14 @@ where
             _phantom,
         } = msg;
         match dest {
-            ReceiverWireFactoryActorMessageDestKind::Applicative => todo!(),
+            ReceiverWireFactoryActorMessageDestKind::Applicative => {
+                let wire = self
+                    .build_user_wire(Some(Ipv4Addr::new(127, 0, 0, 1)))
+                    .unwrap();
+                let locator = wire.locator();
+                let receiver_wire_actor = ReceiverWireActor::spawn((actor, wire));
+                (vec![receiver_wire_actor], LocatorList::new(vec![locator]))
+            }
             ReceiverWireFactoryActorMessageDestKind::SPDP => {
                 let wire = self.build_discovery_listener_multicast_wire().unwrap();
                 let locator = wire.locator();
