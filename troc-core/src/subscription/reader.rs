@@ -1,7 +1,8 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use crate::{
-    ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER, LocatorList, ReaderProxy,
+    ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER, ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER,
+    LocatorList, ReaderProxy,
     messages::{
         GapGroupInfo, HeartbeatGroupInfo, Message, MessageFactory, MessageReceiver,
         SubmessageContent,
@@ -12,7 +13,7 @@ use crate::{
         SequenceNumberSet, SerializedData, SubmessageFlags,
     },
 };
-use chrono::Utc;
+// use chrono::Utc;
 use itertools::Itertools;
 use tracing::{Level, event, instrument};
 
@@ -128,13 +129,13 @@ impl Reader {
         self.guid
     }
 
-    #[instrument(level = Level::ERROR, skip_all, fields(guid = %self.guid))]
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn get_first_available_change(&self) -> Option<&CacheChangeContainer> {
         let mut available_changes = self.iter_all_available_changes(SampleStateKind::NotRead);
         available_changes.next()
     }
 
-    #[instrument(level = Level::ERROR, skip_all, fields(guid = %self.guid))]
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn take_first_available_change(&mut self) -> Option<CacheChangeContainer> {
         let (guid, sequence) = self
             .iter_all_available_changes(SampleStateKind::NotRead)
@@ -149,7 +150,7 @@ impl Reader {
         self.cache.take_change(guid, sequence)
     }
 
-    #[instrument(level = Level::ERROR, skip_all, fields(guid = %self.guid))]
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn get_all_available_changes(
         &self,
         sample_state: SampleStateKind,
@@ -157,7 +158,7 @@ impl Reader {
         self.iter_all_available_changes(sample_state).collect()
     }
 
-    #[instrument(level = Level::ERROR, skip_all, fields(guid = %self.guid))]
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn take_all_available_changes(&mut self) -> Vec<CacheChangeContainer> {
         let available_changes = self
             .iter_all_available_changes(SampleStateKind::NotRead)
@@ -178,9 +179,15 @@ impl Reader {
         changes
     }
 
-    #[instrument(level = Level::ERROR, skip_all, fields(guid = %self.guid))]
-    pub fn ingest(&mut self, effects: &mut Effects, message: Message) -> Result<(), Error> {
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    pub fn ingest(
+        &mut self,
+        effects: &mut Effects,
+        now: i64,
+        message: Message,
+    ) -> Result<(), Error> {
         if self.matched_writers.is_empty() {
+            event!(Level::TRACE, "There are no matched writers");
             return Ok(());
         };
 
@@ -188,9 +195,8 @@ impl Reader {
         self.receiver.capture_header(&message);
 
         if self.is_myself(&self.receiver) {
-            let err_msg = "message is comming from myself".to_string();
-            event!(Level::DEBUG, "{}", &err_msg);
-            return Err(Error::FilteredOut { because: err_msg });
+            event!(Level::TRACE, "message is comming from myself");
+            return Ok(());
         }
 
         for submessage in message.submessages {
@@ -206,13 +212,14 @@ impl Reader {
                     inline_qos,
                     serialized_data,
                 } => {
+                    event!(Level::TRACE, "Receive a Data submessage");
                     if !self.is_the_destination(reader_id) {
-                        event!(Level::DEBUG, "submessage is not for me");
+                        event!(Level::TRACE, "submessage is not for me");
                         continue;
                     }
 
                     let writer_guid =
-                        if matches!(writer_id, ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER) {
+                        if matches!(writer_id, ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER) {
                             Guid::default()
                         } else {
                             Guid::new(self.receiver.source_guid_prefix, writer_id)
@@ -235,8 +242,9 @@ impl Reader {
                     gap_group_info,
                     filtered_count,
                 } => {
+                    event!(Level::TRACE, "Receive a Gap submessage");
                     if !self.is_the_destination(reader_id) {
-                        event!(Level::DEBUG, "submessage is not for me");
+                        event!(Level::TRACE, "submessage is not for me");
                         continue;
                     }
 
@@ -263,13 +271,14 @@ impl Reader {
                     count,
                     heartbeat_group_info,
                 } => {
+                    event!(Level::TRACE, "Receive a Heartbeat submessage");
                     if !self.is_the_destination(reader_id) {
-                        event!(Level::DEBUG, "submessage is not for me");
+                        event!(Level::TRACE, "submessage is not for me");
                         continue;
                     }
 
                     if count <= self.htb_count {
-                        event!(Level::DEBUG, "HEARTBEAT discarded: counter wrong");
+                        event!(Level::TRACE, "HEARTBEAT discarded: counter wrong");
                         continue;
                     }
                     self.htb_count = count;
@@ -278,6 +287,7 @@ impl Reader {
 
                     self.handle_heartbeat(
                         effects,
+                        now,
                         writer_guid,
                         first_sn,
                         last_sn,
@@ -298,8 +308,9 @@ impl Reader {
                     inline_qos,
                     serialized_payload,
                 } => {
+                    event!(Level::TRACE, "Receive a Datafrag submessage");
                     if !self.is_the_destination(reader_id) {
-                        event!(Level::DEBUG, "submessage is not for me");
+                        event!(Level::TRACE, "submessage is not for me");
                         continue;
                     }
 
@@ -323,13 +334,14 @@ impl Reader {
                     last_fragmentation_num,
                     count,
                 } => {
+                    event!(Level::TRACE, "Receive a Heartbeatfrag submessage");
                     if !self.is_the_destination(reader_id) {
-                        event!(Level::DEBUG, "submessage is not for me");
+                        event!(Level::TRACE, "submessage is not for me");
                         continue;
                     }
 
                     if count <= self.htbfrag_count {
-                        event!(Level::DEBUG, "HEARTBEATFRAG discarded: counter wrong");
+                        event!(Level::TRACE, "HEARTBEATFRAG discarded: counter wrong");
                         continue;
                     }
                     self.htbfrag_count = count;
@@ -338,60 +350,62 @@ impl Reader {
 
                     self.handle_heartbeatfrag(
                         effects,
+                        now,
                         writer_guid,
                         writer_sn,
                         last_fragmentation_num,
                     )?
                 }
                 SubmessageContent::InfoTimestamp { timestamp } => {
+                    event!(Level::TRACE, "Receive a InfoTimestamp submessage");
                     self.receiver.rtps_send_timestamp = timestamp
                 }
                 SubmessageContent::AckNack { .. } => {
-                    event!(Level::DEBUG, "Not supposed to receive a AckNack");
+                    event!(Level::TRACE, "Not supposed to receive a AckNack");
                     continue;
                 }
                 SubmessageContent::NackFrag { .. } => {
-                    event!(Level::DEBUG, "Not supposed to receive a NackFrag");
+                    event!(Level::TRACE, "Not supposed to receive a NackFrag");
                     continue;
                 }
                 SubmessageContent::InfoReply { .. } => {
                     event!(
-                        Level::DEBUG,
+                        Level::TRACE,
                         "Received a InfoReply, i currently don't know what to do about it"
                     );
                     continue;
                 }
                 SubmessageContent::InfoDestination { .. } => {
                     event!(
-                        Level::DEBUG,
+                        Level::TRACE,
                         "Received a InfoDestination, i currently don't know what to do about it"
                     );
                     continue;
                 }
                 SubmessageContent::InfoSource { .. } => {
                     event!(
-                        Level::DEBUG,
+                        Level::TRACE,
                         "Received a InfoSource, i currently don't know what to do about it"
                     );
                     continue;
                 }
                 SubmessageContent::HeaderExtension { .. } => {
                     event!(
-                        Level::DEBUG,
+                        Level::TRACE,
                         "Received a HeaderExtension, i currently don't know what to do about it"
                     );
                     continue;
                 }
                 SubmessageContent::Pad => {
                     event!(
-                        Level::DEBUG,
+                        Level::TRACE,
                         "Received a Gap, i currently don't know what to do about it"
                     );
                     continue;
                 }
                 // FIXME: should not be needed, because Deserialization stage should discard any message not in correct format
                 SubmessageContent::Unknown { data: _ } => {
-                    event!(Level::DEBUG, "Unknown message received");
+                    event!(Level::TRACE, "Unknown message received");
                     continue;
                 }
             }
@@ -401,8 +415,8 @@ impl Reader {
         Ok(())
     }
 
-    #[instrument(level = Level::ERROR, skip_all, fields(guid = %self.guid))]
-    pub fn tick(&mut self, effects: &mut Effects) {
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    pub fn tick(&mut self, effects: &mut Effects, now: i64) {
         // TODO: check time related QoS
 
         for (_guid, proxy) in self.matched_writers.iter_mut() {
@@ -467,23 +481,28 @@ impl Reader {
         }
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn add_proxy(&mut self, proxy: WriterProxy) {
         self.matched_writers
             .insert(proxy.get_remote_writer_guid(), proxy);
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn remove_proxy(&mut self, proxy_guid: Guid) {
         self.matched_writers.remove(&proxy_guid);
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn lookup_proxy(&mut self, proxy_guid: Guid) -> bool {
         self.matched_writers.contains_key(&proxy_guid)
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn add_unicast_locators(&mut self, mut locators: LocatorList) {
         self.unicast_locator_list.append(&mut locators);
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn add_multicast_locators(&mut self, mut locators: LocatorList) {
         self.multicast_locator_list.append(&mut locators);
     }
@@ -557,7 +576,8 @@ impl Reader {
         data: Option<SerializedData>,
     ) -> Result<(), Error> {
         let Some(proxy) = self.matched_writers.get_mut(&writer_guid) else {
-            return Err(Error::RemoteWriterNotFound(writer_guid));
+            event!(Level::TRACE, remote_writer_guid = %writer_guid, "Matched Writer not found");
+            return Ok(());
         };
 
         let payload_nature = if flags.third() == 1 && flags.fourth() == 0 {
@@ -570,6 +590,7 @@ impl Reader {
 
         // FIXME: temporary, should be smarter when interop will be needed
         if !matches!(payload_nature, ContentNature::Data) {
+            event!(Level::TRACE, "The payload is not Data");
             return Ok(());
         }
 
@@ -603,7 +624,7 @@ impl Reader {
         }
 
         if let Err(e) = self.cache.push_change(change) {
-            // TODO: trace error
+            event!(Level::ERROR, "Error pushing data in cache");
             // TODO: for now there are no error that could possibly be raised
             unreachable!()
         };
@@ -617,7 +638,7 @@ impl Reader {
 
         if !is_in_watch_all_mode && (is_the_expected_sequence || is_change_already_received) {
             event!(
-                Level::DEBUG,
+                Level::TRACE,
                 is_in_watch_all_mode,
                 is_the_expected_sequence,
                 is_change_already_received,
@@ -638,7 +659,7 @@ impl Reader {
             effects.push(Effect::DataAvailable);
         }
 
-        event!(Level::DEBUG, "DATA processed");
+        event!(Level::TRACE, "DATA processed");
 
         Ok(())
     }
@@ -652,11 +673,12 @@ impl Reader {
         _filtered_count: Option<ChangeCount>,
     ) -> Result<(), Error> {
         let Some(proxy) = self.matched_writers.get_mut(&writer_guid) else {
-            return Err(Error::RemoteWriterNotFound(writer_guid));
+            event!(Level::TRACE, remote_writer_guid = %writer_guid, "Matched Writer not found");
+            return Ok(());
         };
 
         if !Self::is_gap_valid(&gap_start, &gap_list) {
-            event!(Level::DEBUG, "GAP invalid");
+            event!(Level::TRACE, "GAP invalid");
             return Err(Error::InvalidGapError);
         }
 
@@ -671,9 +693,9 @@ impl Reader {
 
             proxy.not_available_change_set(list, ChangeCount::default());
 
-            event!(Level::DEBUG, "GAP processed");
+            event!(Level::TRACE, "GAP processed");
         } else {
-            event!(Level::DEBUG, "GAP discarded");
+            event!(Level::TRACE, "GAP discarded");
         }
 
         Ok(())
@@ -686,22 +708,22 @@ impl Reader {
     fn handle_heartbeat(
         &mut self,
         effects: &mut Effects,
+        now: i64,
         writer_guid: Guid,
         first_sn: SequenceNumber,
         last_sn: SequenceNumber,
         _heartbeat_group_info: Option<HeartbeatGroupInfo>,
     ) -> Result<(), Error> {
         let Some(proxy) = self.matched_writers.get_mut(&writer_guid) else {
-            return Err(Error::RemoteWriterNotFound(writer_guid));
+            event!(Level::TRACE, remote_writer_guid = %writer_guid, "Matched Writer not found");
+            return Ok(());
         };
-
-        let now = Utc::now().timestamp_millis();
 
         let time_diff = now.saturating_sub(proxy.last_heartbeat_timestamp_ms);
 
-        if time_diff > self.config.heartbeat_suppression_delay_ms {
+        if time_diff < self.config.heartbeat_suppression_delay_ms {
             event!(
-                Level::DEBUG,
+                Level::TRACE,
                 "Suppression delay preventing processing this Heartbeat"
             );
             return Ok(());
@@ -710,7 +732,7 @@ impl Reader {
 
         proxy.missing_changes_update(last_sn);
         proxy.lost_changes_update(first_sn, true);
-        proxy.last_missing_frag_remove_until(first_sn);
+        // proxy.last_missing_frag_remove_until(first_sn);
 
         let is_final = self.receiver.flags.second() == 0;
         let missings = proxy.missing_changes();
@@ -721,9 +743,10 @@ impl Reader {
                 delay: self.config.heartbeat_response_delay_ms,
             };
             effects.push(effect);
+            event!(Level::TRACE, "Tick scheduled");
         }
 
-        event!(Level::DEBUG, "HEARTBEAT processed");
+        event!(Level::TRACE, "HEARTBEAT processed");
 
         Ok(())
     }
@@ -742,7 +765,8 @@ impl Reader {
         data: SerializedData,
     ) -> Result<(), Error> {
         let Some(proxy) = self.matched_writers.get_mut(&writer_guid) else {
-            return Err(Error::RemoteWriterNotFound(writer_guid));
+            event!(Level::TRACE, remote_writer_guid = %writer_guid, "Matched Writer not found");
+            return Ok(());
         };
 
         let expected_sequence = proxy.expected_sequence();
@@ -751,13 +775,13 @@ impl Reader {
         let is_change_already_received = proxy.is_change_received(sequence);
 
         if is_expected_sequence || is_change_already_received {
-            event!(Level::DEBUG, "Pre-conditions not met");
+            event!(Level::TRACE, "Pre-conditions not met");
             return Ok(());
         }
 
         if matches!(self.is_reliable, ReliabilityKind::BestEffort) && sequence > expected_sequence {
             event!(
-                Level::DEBUG,
+                Level::TRACE,
                 "This sequence is beyond the one that was expected"
             );
             proxy.lost_changes_update(sequence, false);
@@ -816,7 +840,7 @@ impl Reader {
 
                 if !frag_change.are_fragments_missing(fragment_starting_num, fragment_in_submessage)
                 {
-                    event!(Level::DEBUG, "The fragments has already been processed");
+                    event!(Level::TRACE, "The fragments has already been processed");
                     return Ok(());
                 }
 
@@ -850,21 +874,21 @@ impl Reader {
     fn handle_heartbeatfrag(
         &mut self,
         effects: &mut Effects,
+        now: i64,
         writer_guid: Guid,
         sequence: SequenceNumber,
         last_fragmentation_num: FragmentNumber,
     ) -> Result<(), Error> {
         let Some(proxy) = self.matched_writers.get_mut(&writer_guid) else {
-            return Err(Error::RemoteWriterNotFound(writer_guid));
+            event!(Level::TRACE, remote_writer_guid = %writer_guid, "Matched Writer not found");
+            return Ok(());
         };
-
-        let now = Utc::now().timestamp_millis();
 
         let time_diff = now.saturating_sub(proxy.last_heartbeat_timestamp_ms);
 
         if time_diff > self.config.heartbeat_suppression_delay_ms {
             event!(
-                Level::DEBUG,
+                Level::TRACE,
                 "Suppression delay preventing processing this Heartbeat"
             );
             return Ok(());
@@ -923,6 +947,7 @@ mod tests {
             SerializedData,
         },
     };
+    use chrono::Utc;
     use rstest::{fixture, rstest};
 
     use crate::{
@@ -955,7 +980,9 @@ mod tests {
             )
             .build();
 
-        reader.ingest(&mut effects, message).unwrap();
+        let now = Utc::now().timestamp_millis();
+
+        reader.ingest(&mut effects, now, message).unwrap();
         let result = effects.pop().unwrap();
 
         assert!(matches!(result, Effect::DataAvailable));

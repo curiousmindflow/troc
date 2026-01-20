@@ -4,7 +4,7 @@ use crate::fixture::{DummyStruct, TwoParticipantsBundle};
 
 mod basic;
 // mod complex;
-// mod matching;
+mod matching;
 
 const DOMAIN_ID_98: u32 = 98;
 const DOMAIN_ID_99: u32 = 99;

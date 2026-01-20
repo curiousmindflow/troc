@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use chrono::Utc;
-use tracing::{Level, event};
+use tracing::{Level, event, instrument};
 
 use crate::{
     CacheChange, WriterProxy,
@@ -107,8 +107,8 @@ impl WriterBuilder {
             cache,
             receiver: MessageReceiver::new(guid.get_guid_prefix()),
             last_change_sequence_number: SEQUENCENUMBER_UNKNOWN,
-            heartbeat_counter: Counter::default(),
-            heartbeatfrag_counter: Counter::default(),
+            heartbeat_counter: Counter::new(),
+            heartbeatfrag_counter: Counter::new(),
             unicast_locator_list,
             multicast_locator_list,
             config,
@@ -138,6 +138,7 @@ impl Writer {
         self.guid
     }
 
+    // TODO: remove any dependences on real Time
     pub fn new_change(
         &mut self,
         kind: ChangeKind,
@@ -166,6 +167,7 @@ impl Writer {
         }
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_change(&mut self, effects: &mut Effects, change: CacheChange) -> Result<(), Error> {
         self.cache.push_change(change).unwrap();
         self.produce_data(self.last_change_sequence_number, effects)
@@ -174,7 +176,13 @@ impl Writer {
     /// Process an incomming message if it contains a Acknack or a NackFrag submessage
     ///
     /// Each Acknack will records positive and/or negative acknowledgments and call [`NackedDataSchedulePort::on_nacked_data_schedule`] if one was provided
-    pub fn ingest(&mut self, effects: &mut Effects, message: Message) -> Result<(), Error> {
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    pub fn ingest(
+        &mut self,
+        effects: &mut Effects,
+        now: i64,
+        message: Message,
+    ) -> Result<(), Error> {
         if matches!(self.is_reliable, ReliabilityKind::BestEffort) {
             // FIXME: maybe this check can be done at compile time through type system wizardry
             return Err(Error::IsBestEffort);
@@ -184,9 +192,8 @@ impl Writer {
         self.receiver.capture_header(&message);
 
         if self.is_myself(&self.receiver) {
-            let err_msg = "message is comming from myself".to_string();
-            event!(Level::DEBUG, "{}", &err_msg);
-            return Err(Error::FilteredOut { because: err_msg });
+            event!(Level::TRACE, "message is comming from myself");
+            return Ok(());
         }
 
         for submessage in message.submessages {
@@ -200,19 +207,19 @@ impl Writer {
                     count,
                 } => {
                     if !self.is_the_destination(writer_id) {
-                        event!(Level::DEBUG, "submessage is not for me");
+                        event!(Level::TRACE, "submessage is not for me");
                         continue;
                     }
 
                     let reader_guid = Guid::new(self.receiver.source_guid_prefix, reader_id);
 
                     let Some(proxy) = self.matched_readers.get_mut(&reader_guid) else {
-                        event!(Level::DEBUG, "ReaderProxy is unknown");
+                        event!(Level::TRACE, "ReaderProxy is unknown");
                         continue;
                     };
 
                     if count <= proxy.acknack_count {
-                        event!(Level::DEBUG, "HEARTBEAT discarded: counter wrong");
+                        event!(Level::TRACE, "HEARTBEAT discarded: counter wrong");
                         continue;
                     }
                     proxy.acknack_count = count;
@@ -235,29 +242,31 @@ impl Writer {
                     fragmentation_number_state,
                     count,
                 } => {
-                    if !self.is_the_destination(writer_id) {
-                        event!(Level::DEBUG, "submessage is not for me");
-                        continue;
-                    }
+                    // FIXME: work on the frag logic here
 
-                    let Some(proxy) = self
-                        .matched_readers
-                        .get_mut(&Guid::new(self.receiver.source_guid_prefix, reader_id))
-                    else {
-                        event!(Level::DEBUG, "ReaderProxy is unknown");
-                        continue;
-                    };
+                    continue;
 
-                    if count <= proxy.nackfrag_count {
-                        event!(Level::DEBUG, "HEARTBEAT discarded: counter wrong");
-                        continue;
-                    }
-                    proxy.nackfrag_count = count;
+                    // if !self.is_the_destination(writer_id) {
+                    // event!(Level::TRACE, "submessage is not for me");
+                    // continue;
+                    // }
 
-                    todo!()
+                    // let Some(proxy) = self
+                    // .matched_readers
+                    // .get_mut(&Guid::new(self.receiver.source_guid_prefix, reader_id))
+                    // else {
+                    // event!(Level::TRACE, "ReaderProxy is unknown");
+                    // continue;
+                    // };
+
+                    // if count <= proxy.nackfrag_count {
+                    // event!(Level::TRACE, "HEARTBEAT discarded: counter wrong");
+                    // continue;
+                    // }
+                    // proxy.nackfrag_count = count;
                 }
                 _ => {
-                    event!(Level::DEBUG, "Unexpected submessage received");
+                    event!(Level::TRACE, "Unexpected submessage received");
                 }
             }
         }
@@ -265,8 +274,12 @@ impl Writer {
         Ok(())
     }
 
-    pub fn tick(&mut self, effects: &mut Effects) {
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    pub fn tick(&mut self, effects: &mut Effects, now: i64) {
+        event!(Level::WARN, "Writer ticked");
+
         if matches!(self.is_reliable, ReliabilityKind::BestEffort) {
+            event!(Level::TRACE, "BestEffort Writer doesn't send HEARTBEAT");
             return;
         }
 
@@ -290,15 +303,16 @@ impl Writer {
                     .writer(self.guid.get_entity_id())
                     .heartbeat(false, false, min, max, count, None);
 
-                let last_frag_per_sequence = self.cache.get_last_frag_per_sequence();
+                // FIXME: fix frag logic
+                // let last_frag_per_sequence = self.cache.get_last_frag_per_sequence();
 
-                // this check if the number of heartbeat submessages will not making the Message length greater than the maximum UDP packet
-                assert!(last_frag_per_sequence.len() < 2000);
+                // // this check if the number of heartbeat submessages will not making the Message length greater than the maximum UDP packet
+                // assert!(last_frag_per_sequence.len() < 2000);
 
-                for (sequence, last_frag_num) in last_frag_per_sequence {
-                    let count = self.heartbeatfrag_counter.increase();
-                    msg = msg.heartbeatfrag(sequence, FragmentNumber(last_frag_num.0 + 1), count)
-                }
+                // for (sequence, last_frag_num) in last_frag_per_sequence {
+                //     let count = self.heartbeatfrag_counter.increase();
+                //     msg = msg.heartbeatfrag(sequence, FragmentNumber(last_frag_num.0 + 1), count)
+                // }
 
                 let message = msg.build();
 
@@ -308,8 +322,10 @@ impl Writer {
                     locators: proxy.get_locators(),
                 };
                 effects.push(effect);
+
+                event!(Level::TRACE, "HEARTBEAT message produced");
             } else {
-                event!(Level::DEBUG, "No unacked changes");
+                event!(Level::TRACE, "No unacked changes");
             }
 
             // NACKED production
@@ -348,29 +364,36 @@ impl Writer {
                     locators: proxy.get_locators(),
                 };
                 effects.push(effect);
+
+                event!(Level::TRACE, "NACK message produced");
             } else {
-                event!(Level::DEBUG, "No requested changes");
+                event!(Level::TRACE, "No requested changes");
             }
         }
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_proxy(&mut self, proxy: ReaderProxy) {
         self.matched_readers
             .insert(proxy.get_remote_reader_guid(), proxy);
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn remove_proxy(&mut self, proxy_guid: Guid) {
         self.matched_readers.remove(&proxy_guid);
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn lookup_proxy(&mut self, proxy_guid: Guid) -> bool {
         self.matched_readers.contains_key(&proxy_guid)
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_unicast_locators(&mut self, mut locators: LocatorList) {
         self.unicast_locator_list.append(&mut locators);
     }
 
+    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_multicast_locators(&mut self, mut locators: LocatorList) {
         self.multicast_locator_list.append(&mut locators);
     }
@@ -380,6 +403,7 @@ impl Writer {
         sequence: SequenceNumber,
         effects: &mut Effects,
     ) -> Result<(), Error> {
+        event!(Level::TRACE, "produce data");
         if self.matched_readers.is_empty() {
             return Ok(());
         }
@@ -497,6 +521,7 @@ mod test {
             ReliabilityKind, SequenceNumber, SequenceNumberSet, SerializedData,
         },
     };
+    use chrono::Utc;
     use rstest::{fixture, rstest};
 
     use crate::{
@@ -558,7 +583,9 @@ mod test {
         writer.add_change(&mut effects, change).unwrap();
         effects.clean();
 
-        writer.ingest(&mut effects, message).unwrap();
+        let now = Utc::now().timestamp_millis();
+
+        writer.ingest(&mut effects, now, message).unwrap();
 
         effects.consume(|e| {
             let Effect::ScheduleTick { delay } = e else {
@@ -587,7 +614,9 @@ mod test {
         reader_proxy.highest_sent_change_sn = SequenceNumber(1);
         // tweak internal fields value to let Writer believe he has acknowledged changes / unacknowledged changes
         // call tick()
-        writer.tick(&mut effects);
+        let now = Utc::now().timestamp_millis();
+
+        writer.tick(&mut effects, now);
         // assert Message effect is produced, with correct content
         // TODO: effects should contains a Message (Heartbeat) and a Message (Data)
     }

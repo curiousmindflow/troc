@@ -1,3 +1,3 @@
 mod timer;
 
-pub use timer::{TimerActor, TimerActorMessage};
+pub use timer::{TimerActor, TimerActorScheduleTickMessage};

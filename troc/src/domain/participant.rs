@@ -7,7 +7,7 @@ use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tracing::{Level, event};
 use troc_core::builtin_endpoint_qos::BuiltinEndpointQos;
 use troc_core::domain_id::DomainId;
-use troc_core::{DdsError, DiscoveryBuilder, DiscoveryConfiguration};
+use troc_core::{DdsError, DiscoveryBuilder, DiscoveryConfiguration, Locator};
 use troc_core::{DomainTag, EntityId, EntityKey};
 use troc_core::{
     ENTITYID_PARTICIPANT, Guid, ParticipantProxy, TopicKind, VENDORID_UNKNOWN,
@@ -20,7 +20,7 @@ use crate::publication::{Publisher, PublisherActor, PublisherActorCreateObject};
 use crate::subscription::{Subscriber, SubscriberActor, SubscriberActorCreateObject};
 use crate::time::TimerActor;
 use crate::wires::{
-    ReceiverWireFactoryActorMessage, ReceiverWireFactoryActorMessageDestKind,
+    ReceiverWireActor, ReceiverWireFactoryActorMessage, SenderWireActor,
     SenderWireFactoryActorMessage, WireFactoryActor,
 };
 use crate::{
@@ -35,7 +35,8 @@ use crate::{
 
 #[derive(Default)]
 pub struct DomainParticipantBuilder {
-    domain_id: u32,
+    guid: Option<Guid>,
+    domain_id: Option<u32>,
     configuration: Option<Configuration>,
 }
 
@@ -44,8 +45,13 @@ impl DomainParticipantBuilder {
         Self::default()
     }
 
+    pub fn with_guid(mut self, guid: Guid) -> Self {
+        self.guid = Some(guid);
+        self
+    }
+
     pub fn with_domain(mut self, domain_id: u32) -> Self {
-        self.domain_id = domain_id;
+        self.domain_id = Some(domain_id);
         self
     }
 
@@ -56,16 +62,18 @@ impl DomainParticipantBuilder {
 
     pub async fn build(self) -> DomainParticipant {
         let DomainParticipantBuilder {
+            guid,
             domain_id,
             configuration,
         } = self;
         let configuration =
             configuration.unwrap_or_else(|| Self::retrieve_configuration(None).unwrap());
-        let guid = Guid::generate(VENDORID_UNKNOWN, ENTITYID_PARTICIPANT);
+        let guid = guid.unwrap_or(Guid::generate(VENDORID_UNKNOWN, ENTITYID_PARTICIPANT));
+        let domain_id = domain_id.unwrap_or_default();
 
         let actor = DomainParticipantActor::spawn(DomainParticipantActorCreationObject {
-            domain_id,
             guid,
+            domain_id,
             configuration: configuration.clone(),
         });
         actor.wait_for_startup().await;
@@ -167,7 +175,7 @@ impl Message<DomainParticipantListenerCreate> for DomainParticipantActor {
         _msg: DomainParticipantListenerCreate,
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        self._event_sender.subscribe()
+        self._event_receiver.take().unwrap()
     }
 }
 
@@ -216,7 +224,6 @@ struct DomainParticipantActorCreationObject {
 struct DomainParticipantActor {
     domain_id: u32,
     guid: Guid,
-    // listener: DomainParticipantListenerHandle,
     infos: ParticipantProxy,
     config: Configuration,
     timer: ActorRef<TimerActor>,
@@ -225,7 +232,7 @@ struct DomainParticipantActor {
     entity_identifier: ActorRef<EntityIdentifierActor>,
     publishers: Vec<ActorRef<PublisherActor>>,
     subscribers: Vec<ActorRef<SubscriberActor>>,
-    _event_sender: Sender<ParticipantEvent>,
+    _event_receiver: Option<Receiver<ParticipantEvent>>,
 }
 
 impl DomainParticipantActor {
@@ -314,14 +321,66 @@ impl Actor for DomainParticipantActor {
         ));
         wire_factory.wait_for_startup().await;
         actor_ref.link(&wire_factory).await;
-        let (event_sender, _) = channel(64);
-        let discovery_configuration = DiscoveryConfiguration::new();
-        let discovery =
+        let (event_sender, event_receiver) = channel(64);
+
+        let mut input_wires = Vec::default();
+        let (receiver_many_to_many, receiver_locators_many_to_many) = wire_factory
+            .ask(ReceiverWireFactoryActorMessage::SPDP)
+            .await
+            .unwrap();
+        input_wires.extend(receiver_many_to_many);
+        let (receiver_on_to_one, receiver_locators_on_to_one) = wire_factory
+            .ask(ReceiverWireFactoryActorMessage::SEDP)
+            .await
+            .unwrap();
+        input_wires.extend(receiver_on_to_one);
+        let locators = receiver_locators_many_to_many
+            .clone()
+            .merge(receiver_locators_on_to_one.clone());
+
+        let input_wires: HashMap<Locator, ActorRef<ReceiverWireActor>> =
+            HashMap::from_iter(locators.iter().zip(input_wires).map(|(a, b)| (*a, b)));
+
+        let mut output_wires = Vec::default();
+        let (sender_many_to_many, sender_locators_many_to_many) = wire_factory
+            .ask(SenderWireFactoryActorMessage::SPDP)
+            .await
+            .unwrap();
+        output_wires.extend(sender_many_to_many);
+
+        let output_wires: HashMap<Locator, ActorRef<SenderWireActor>> = HashMap::from_iter(
+            sender_locators_many_to_many
+                .iter()
+                .zip(output_wires)
+                .map(|(a, b)| (*a, b)),
+        );
+
+        let metatraffic_unicast_locator_list = receiver_locators_on_to_one;
+        let mut metatraffic_multicast_locator_list =
+            receiver_locators_many_to_many.merge(sender_locators_many_to_many);
+        metatraffic_multicast_locator_list.sort();
+        metatraffic_multicast_locator_list.dedup();
+
+        let discovery_configuration = DiscoveryConfiguration {
+            announcement_period: args.configuration.discovery.announcement_period.as_millis()
+                as i64,
+            lease_duration: args.configuration.discovery.lease_duration,
+        };
+        let mut discovery =
             DiscoveryBuilder::new(args.guid.get_guid_prefix(), discovery_configuration).build();
+        discovery.add_pdp_announcer_proxy(
+            Default::default(),
+            metatraffic_multicast_locator_list.clone(),
+        );
+        discovery.add_pdp_detector_proxy(
+            Default::default(),
+            metatraffic_multicast_locator_list.clone(),
+        );
 
         let discovery = DiscoveryActor::spawn(DiscoveryActorCreateObject {
+            participant_guid_prefix: args.guid.get_guid_prefix(),
             discovery,
-            event_sender: event_sender.clone(),
+            event_sender,
             timer: timer.clone(),
         });
         discovery.wait_for_startup().await;
@@ -340,42 +399,6 @@ impl Actor for DomainParticipantActor {
         endpoint_set.set_disc_builtin_endpoint_subscriptions_detector(1);
         endpoint_set.set_builtin_endpoint_participant_message_data_reader(1);
         endpoint_set.set_builtin_endpoint_participant_message_data_writer(1);
-
-        let mut input_wires = Vec::default();
-        let (receiver_many_to_many, receiver_locators_many_to_many) = wire_factory
-            .ask(ReceiverWireFactoryActorMessage::<DiscoveryActor>::new(
-                ReceiverWireFactoryActorMessageDestKind::SPDP,
-                discovery.clone(),
-            ))
-            .await
-            .unwrap();
-        input_wires.extend(receiver_many_to_many);
-        let (receiver_on_to_one, receiver_locators_on_to_one) = wire_factory
-            .ask(ReceiverWireFactoryActorMessage::<DiscoveryActor>::new(
-                ReceiverWireFactoryActorMessageDestKind::SEDP,
-                discovery.clone(),
-            ))
-            .await
-            .unwrap();
-        input_wires.extend(receiver_on_to_one);
-
-        let mut output_wires = Vec::default();
-        let (sender_many_to_many, sender_locators_many_to_many) = wire_factory
-            .ask(SenderWireFactoryActorMessage::SPDP)
-            .await
-            .unwrap();
-        output_wires.extend(sender_many_to_many);
-
-        let output_wires = HashMap::from_iter(
-            sender_locators_many_to_many
-                .iter()
-                .zip(output_wires)
-                .map(|(a, b)| (*a, b)),
-        );
-
-        let metatraffic_unicast_locator_list = receiver_locators_on_to_one;
-        let metatraffic_multicast_locator_list =
-            receiver_locators_many_to_many.merge(sender_locators_many_to_many);
 
         let infos = ParticipantProxy::new(
             args.guid.get_guid_prefix(),
@@ -409,10 +432,14 @@ impl Actor for DomainParticipantActor {
             .await
             .unwrap();
 
+        discovery
+            .tell(DiscoveryActorMessage::Tick {})
+            .await
+            .unwrap();
+
         let domain_participant_actor = Self {
             domain_id: args.domain_id,
             guid: args.guid,
-            // listener: todo!(),
             infos,
             config: args.configuration,
             timer,
@@ -421,7 +448,7 @@ impl Actor for DomainParticipantActor {
             entity_identifier,
             publishers: Vec::default(),
             subscribers: Vec::default(),
-            _event_sender: event_sender,
+            _event_receiver: Some(event_receiver),
         };
         Ok(domain_participant_actor)
     }

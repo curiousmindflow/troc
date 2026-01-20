@@ -10,45 +10,45 @@ use crate::{
 };
 
 #[derive()]
-pub enum TimerActorMessage {
-    ScheduleWriterTick {
+pub enum TimerActorScheduleTickMessage {
+    Writer {
         delay: i64,
         target: ActorRef<DataWriterActor>,
     },
-    ScheduleReaderTick {
+    Reader {
         delay: i64,
         target: ActorRef<DataReaderActor>,
     },
-    ScheduleDiscoveryTick {
+    Discovery {
         delay: i64,
         target: ActorRef<DiscoveryActor>,
     },
 }
 
-impl Message<TimerActorMessage> for TimerActor {
+impl Message<TimerActorScheduleTickMessage> for TimerActor {
     type Reply = ();
 
     async fn handle(
         &mut self,
-        msg: TimerActorMessage,
-        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+        msg: TimerActorScheduleTickMessage,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         match msg {
-            TimerActorMessage::ScheduleWriterTick { delay, target } => {
+            TimerActorScheduleTickMessage::Writer { delay, target } => {
                 tokio::spawn(async move {
-                    sleep(Duration::from_millis(delay as u64));
+                    sleep(Duration::from_millis(delay as u64)).await;
                     target.tell(DataWriterActorMessage::Tick).await.unwrap()
                 });
             }
-            TimerActorMessage::ScheduleReaderTick { delay, target } => {
+            TimerActorScheduleTickMessage::Reader { delay, target } => {
                 tokio::spawn(async move {
-                    sleep(Duration::from_millis(delay as u64));
+                    sleep(Duration::from_millis(delay as u64)).await;
                     target.tell(DataReaderActorMessage::Tick).await.unwrap()
                 });
             }
-            TimerActorMessage::ScheduleDiscoveryTick { delay, target } => {
+            TimerActorScheduleTickMessage::Discovery { delay, target } => {
                 tokio::spawn(async move {
-                    sleep(Duration::from_millis(delay as u64));
+                    sleep(Duration::from_millis(delay as u64)).await;
                     target.tell(DiscoveryActorMessage::Tick).await.unwrap()
                 });
             }
@@ -66,7 +66,7 @@ impl Actor for TimerActor {
 
     async fn on_start(
         args: Self::Args,
-        actor_ref: kameo::prelude::ActorRef<Self>,
+        _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
         Ok(args)
     }

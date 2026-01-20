@@ -8,9 +8,9 @@ use tracing::{Level, event, level_filters::LevelFilter};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use troc::{
     Configuration, DataReader, DataWriter, DeadlineQosPolicy, DomainParticipant,
-    DomainParticipantBuilder, DomainTag, DurabilityQosPolicy, DurationKind, HistoryQosPolicy,
-    LifespanQosPolicy, LivelinessQosPolicy, Publisher, QosPolicy, QosPolicyBuilder,
-    ReliabilityQosPolicy, Subscriber, TopicKind,
+    DomainParticipantBuilder, DomainTag, DurabilityQosPolicy, DurationKind, EntityId, Guid,
+    GuidPrefix, HistoryQosPolicy, LifespanQosPolicy, LivelinessQosPolicy, Publisher, QosPolicy,
+    QosPolicyBuilder, ReliabilityQosPolicy, Subscriber, TopicKind, VendorId,
 };
 
 pub struct TwoParticipantsBundle {
@@ -44,7 +44,7 @@ pub struct ThreeParticipantsBundle {
 #[once]
 pub fn setup_log() {
     let filter_layer = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
+        .with_default_directive(LevelFilter::TRACE.into())
         .from_env_lossy()
         .add_directive("neli=warn".parse().unwrap());
 
@@ -74,6 +74,17 @@ pub fn get_unique_id() -> String {
 }
 
 #[fixture]
+pub fn get_guid(#[default(0)] offset: u8) -> Guid {
+    Guid::new(
+        GuidPrefix::from(
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, offset],
+            VendorId::default(),
+        ),
+        EntityId::default(),
+    )
+}
+
+#[fixture]
 pub async fn two_participants(
     #[default("")] topic_name: impl AsRef<str>,
     #[default(TopicKind::NoKey)] topic_kind: TopicKind,
@@ -81,6 +92,10 @@ pub async fn two_participants(
     #[default(QosPolicy::default())] writer_qos: QosPolicy,
     #[default(0)] alpha_domain_id: u32,
     #[default(0)] beta_domain_id: u32,
+    #[from(get_guid)] alpha_guid: Guid,
+    #[from(get_guid)]
+    #[with(1)]
+    beta_guid: Guid,
     #[from(get_unique_id)] unique_id: String,
 ) -> TwoParticipantsBundle {
     let mut configuration = Configuration::default();
@@ -89,12 +104,14 @@ pub async fn two_participants(
     configuration.discovery.lease_duration = Duration::from_secs(3);
 
     let mut alpha_domain_participant = DomainParticipantBuilder::new()
+        .with_guid(alpha_guid)
         .with_domain(alpha_domain_id)
         .with_config(configuration.clone())
         .build()
         .await;
 
     let mut beta_domain_participant = DomainParticipantBuilder::new()
+        .with_guid(beta_guid)
         .with_domain(beta_domain_id)
         .with_config(configuration.clone())
         .build()

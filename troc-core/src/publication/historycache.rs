@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use crate::types::{FragmentNumber, SequenceNumber};
 use contracts::requires;
 use thiserror::Error;
+use tracing::{Level, event};
 
 use crate::CacheChange;
 
@@ -82,8 +83,9 @@ impl WriterHistoryCache {
             self.changes.push_front(change);
             Ok(())
         } else {
-            // TODO: handle resources limit cases
-            todo!()
+            // FIXME: handle resources limit cases
+            self.changes.push_front(change);
+            Ok(())
         }
     }
 

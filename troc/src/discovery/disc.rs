@@ -5,16 +5,19 @@ use chrono::Utc;
 use kameo::actor::ActorRef;
 use kameo::{Actor, prelude::Message};
 use tokio::sync::broadcast::Sender;
-use tracing::{Level, event};
+use tracing::{Level, event, instrument};
 use troc_core::{
-    DdsError, Discovery as ProtocolDiscovery, Effect, Effects, Locator, ReaderProxy, WriterProxy,
+    DdsError, Discovery as ProtocolDiscovery, Effect, Effects, GuidPrefix, Locator, ReaderProxy,
+    WriterProxy,
 };
 
 use troc_core::{EntityId, InlineQos, ParticipantProxy};
 
 use crate::ParticipantEvent;
-use crate::time::{TimerActor, TimerActorMessage};
-use crate::wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage};
+use crate::time::{TimerActor, TimerActorScheduleTickMessage};
+use crate::wires::{
+    ReceiverWireActor, ReceiverWireActorMessage, Sendable, SenderWireActor, SenderWireActorMessage,
+};
 
 #[derive(Debug)]
 pub enum DiscoveryActorMessage {
@@ -32,7 +35,7 @@ pub enum DiscoveryActorMessage {
         message: BytesMut,
     },
     AddInputWire {
-        wires: Vec<ActorRef<ReceiverWireActor<DiscoveryActor>>>,
+        wires: HashMap<Locator, ActorRef<ReceiverWireActor>>,
     },
     AddOutputWires {
         wires: HashMap<Locator, ActorRef<SenderWireActor>>,
@@ -42,6 +45,7 @@ pub enum DiscoveryActorMessage {
 impl Message<DiscoveryActorMessage> for DiscoveryActor {
     type Reply = ();
 
+    #[instrument(name = "discovery", skip_all, fields(participant_guid_prefix = %self.participant_guid_prefix))]
     async fn handle(
         &mut self,
         msg: DiscoveryActorMessage,
@@ -50,11 +54,15 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
         let now = Utc::now().timestamp_millis();
         match msg {
             DiscoveryActorMessage::ParticipantProxyChanged(participant_proxy) => {
+                // TODO: here, we get the Locators inside participant proxy, we can then ask WireFactory the Locators we don't have yet
+                // since the DiscoveryActor is obviously already created at this point, it's not an issue to pass a clone to the ReceiverWire
+                event!(Level::TRACE, "Participant proxy changed",);
                 self.discovery
                     .update_participant_infos(&mut self.effects, participant_proxy)
                     .unwrap();
             }
             DiscoveryActorMessage::WriterCreated { writer_proxy } => {
+                event!(Level::TRACE, "DataWriter created");
                 self.discovery
                     .add_publications_infos(&mut self.effects, writer_proxy, InlineQos::default())
                     .unwrap();
@@ -62,30 +70,48 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
             DiscoveryActorMessage::WriterRemoved(entity_id) => {
                 self.discovery.remove_publications_infos(entity_id).unwrap();
             }
-            DiscoveryActorMessage::ReaderCreated { reader_proxy } => self
-                .discovery
-                .add_subscriptions_infos(&mut self.effects, reader_proxy, InlineQos::default())
-                .unwrap(),
+            DiscoveryActorMessage::ReaderCreated { reader_proxy } => {
+                event!(Level::TRACE, "DataReader created");
+                self.discovery
+                    .add_subscriptions_infos(&mut self.effects, reader_proxy, InlineQos::default())
+                    .unwrap();
+            }
             DiscoveryActorMessage::ReaderRemoved(entity_id) => {
                 self.discovery
                     .remove_subscriptions_infos(entity_id)
                     .unwrap();
             }
-            DiscoveryActorMessage::Tick => self.discovery.tick(&mut self.effects, now).unwrap(),
+            DiscoveryActorMessage::Tick => {
+                event!(Level::TRACE, "Discovery ticked");
+                self.discovery.tick(&mut self.effects, now).unwrap()
+            }
             DiscoveryActorMessage::IncomingMessage { message } => {
-                let message = tokio::task::spawn_blocking(move || {
-                    troc_core::Message::deserialize_from(&message).unwrap()
+                event!(Level::TRACE, "Incoming message arrived");
+                let Ok(message) = tokio::task::spawn_blocking(move || {
+                    troc_core::Message::deserialize_from(&message)
                 })
                 .await
-                .unwrap();
+                .unwrap() else {
+                    event!(Level::ERROR, "Deserialization failed");
+                    return;
+                };
                 self.discovery
                     .ingest(&mut self.effects, message, now)
-                    .unwrap()
+                    .unwrap();
             }
             DiscoveryActorMessage::AddInputWire { wires } => {
+                event!(Level::TRACE, "Input wires received");
+                for wire in wires.values() {
+                    wire.tell(ReceiverWireActorMessage::Start {
+                        actor_dest: ctx.actor_ref().clone(),
+                    })
+                    .await
+                    .unwrap();
+                }
                 self.input_wires.extend(wires);
             }
             DiscoveryActorMessage::AddOutputWires { wires } => {
+                event!(Level::TRACE, "Output wires received");
                 self.output_wires.extend(wires);
             }
         }
@@ -97,18 +123,20 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     message,
                     locators,
                 } => {
-                    let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
+                    event!(Level::TRACE, ?locators, ?self.output_wires, "Processing Effect::Message");
+                    let message = tokio::task::spawn_blocking(move || {
                         // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
                         // FIXME: line above lead to crash because of "failed to fill whole buffer", crash happend at serialization, one line below
                         // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
                         let mut emission_buffer = BytesMut::zeroed(65 * 1024);
                         let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
-                        (nb_bytes, emission_buffer)
+                        emission_buffer.split_to(nb_bytes)
                     })
                     .await
                     .unwrap();
                     for locator in locators.iter() {
                         if let Some(actor) = self.output_wires.get(locator) {
+                            event!(Level::TRACE, "Message sent to {locator}");
                             actor
                                 .tell(SenderWireActorMessage {
                                     buffer: message.clone(),
@@ -117,15 +145,17 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                                 .unwrap();
                         }
                     }
+
+                    event!(Level::DEBUG, "All messages sent");
                 }
                 Effect::ParticipantMatch { participant_proxy } => {
-                    //
+                    event!(Level::TRACE, "Processing Effect::ParticipantMatch");
                     let _res = self
                         .event_sender
                         .send(ParticipantEvent::ParticipantDiscovered { participant_proxy });
                 }
                 Effect::ParticipantRemoved { participant_proxy } => {
-                    //
+                    event!(Level::TRACE, "Processing Effect::ParticipantRemoved");
                     let _res = self
                         .event_sender
                         .send(ParticipantEvent::ParticipantRemoved { participant_proxy });
@@ -135,7 +165,7 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     local_reader_infos,
                     remote_writer_infos,
                 } => {
-                    //
+                    event!(Level::TRACE, "Processing Effect::ReaderMatch");
                     let _res = self.event_sender.send(ParticipantEvent::ReaderDiscovered {
                         reader_data: local_reader_infos,
                     });
@@ -145,21 +175,22 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     local_writer_infos,
                     remote_reader_infos,
                 } => {
-                    //
+                    event!(Level::TRACE, "Processing Effect::WriterMatch");
                     let _res = self.event_sender.send(ParticipantEvent::WriterDiscovered {
                         writer_data: local_writer_infos,
                     });
                 }
                 Effect::ScheduleTick { delay } => {
+                    event!(Level::TRACE, delay = %delay, "Processing Effect::ScheduleTick");
                     self.timer
-                        .tell(TimerActorMessage::ScheduleDiscoveryTick {
+                        .tell(TimerActorScheduleTickMessage::Discovery {
                             delay,
                             target: ctx.actor_ref().clone(),
                         })
                         .await
                         .unwrap();
                 }
-                _ => unreachable!(),
+                _ => continue,
             }
         }
     }
@@ -167,6 +198,7 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
 
 #[derive(Debug)]
 pub struct DiscoveryActorCreateObject {
+    pub participant_guid_prefix: GuidPrefix,
     pub discovery: ProtocolDiscovery,
     pub event_sender: Sender<ParticipantEvent>,
     pub timer: ActorRef<TimerActor>,
@@ -174,11 +206,12 @@ pub struct DiscoveryActorCreateObject {
 
 #[derive()]
 pub struct DiscoveryActor {
+    participant_guid_prefix: GuidPrefix,
     discovery: ProtocolDiscovery,
     effects: Effects,
     timer: ActorRef<TimerActor>,
     event_sender: Sender<ParticipantEvent>,
-    input_wires: Vec<ActorRef<ReceiverWireActor<DiscoveryActor>>>,
+    input_wires: HashMap<Locator, ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
 }
 
@@ -192,6 +225,7 @@ impl Actor for DiscoveryActor {
         _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
         let actor = Self {
+            participant_guid_prefix: args.participant_guid_prefix,
             discovery: args.discovery,
             effects: Effects::default(),
             timer: args.timer,
@@ -199,6 +233,7 @@ impl Actor for DiscoveryActor {
             input_wires: Default::default(),
             output_wires: Default::default(),
         };
+
         Ok(actor)
     }
 }

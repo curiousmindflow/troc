@@ -266,7 +266,6 @@ impl WriterProxy {
         self.available_changes_max() + 1
     }
 
-    #[inline(never)]
     fn fill(&mut self, up_to: SequenceNumber) {
         let first_sequence = self
             .changes_from_writer_map
@@ -291,7 +290,6 @@ impl WriterProxy {
         }
     }
 
-    #[inline(never)]
     pub fn clean(&mut self, min_seq_in_cache: &SequenceNumber) {
         fn clean_condition(cfw: &ChangeFromWriter, min_seq_in_cache: &SequenceNumber) -> bool {
             &cfw.change_sequence_number < min_seq_in_cache

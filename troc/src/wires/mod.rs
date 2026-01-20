@@ -9,13 +9,9 @@ pub use error::WireError;
 use troc_core::Locator;
 pub use wire::*;
 pub use wire_factory::{
-    ReceiverWireActor, ReceiverWireFactoryActorMessage, ReceiverWireFactoryActorMessageDestKind,
-    Sendable, SenderWireActor, SenderWireActorMessage, SenderWireFactoryActorMessage,
-    WireFactoryActor,
+    ReceiverWireActor, ReceiverWireActorMessage, ReceiverWireFactoryActorMessage, Sendable,
+    SenderWireActor, SenderWireActorMessage, SenderWireFactoryActorMessage, WireFactoryActor,
 };
-
-// #[cfg(test)]
-// use mockall::*;
 
 #[derive(Debug, Clone, Copy)]
 pub enum TransmissionKind {

@@ -18,7 +18,6 @@ use crate::publication::DataWriterActorMessage;
 use crate::publication::datawriter::DataWriterActorCreateObject;
 use crate::time::TimerActor;
 use crate::wires::ReceiverWireFactoryActorMessage;
-use crate::wires::ReceiverWireFactoryActorMessageDestKind;
 use crate::wires::WireFactoryActor;
 use crate::{
     domain::{Configuration, EntityIdentifierActor},
@@ -106,10 +105,7 @@ impl Publisher {
 
         let (input_wires, locators) = self
             .wire_factory
-            .ask(ReceiverWireFactoryActorMessage::<DataWriterActor>::new(
-                ReceiverWireFactoryActorMessageDestKind::Applicative,
-                writer_actor.clone(),
-            ))
+            .ask(ReceiverWireFactoryActorMessage::Applicative)
             .await
             .unwrap();
 

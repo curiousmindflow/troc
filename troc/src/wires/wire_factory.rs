@@ -9,10 +9,13 @@ use kameo::{
 use local_ip_address::local_ip;
 use std::{
     io::ErrorKind,
-    marker::PhantomData,
     net::{IpAddr, Ipv4Addr},
     str::FromStr,
     sync::Arc,
+};
+use tokio::{
+    select,
+    sync::{Notify, mpsc::channel},
 };
 use troc_core::{Locator, LocatorKind, LocatorList};
 
@@ -47,71 +50,40 @@ impl Message<SenderWireFactoryActorMessage> for WireFactoryActor {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ReceiverWireFactoryActorMessageDestKind {
+#[derive()]
+pub enum ReceiverWireFactoryActorMessage {
     Applicative,
     SPDP,
     SEDP,
 }
 
-#[derive()]
-pub struct ReceiverWireFactoryActorMessage<T>
-where
-    T: Actor,
-{
-    dest: ReceiverWireFactoryActorMessageDestKind,
-    actor: ActorRef<T>,
-    _phantom: PhantomData<T>,
-}
-
-impl<T> ReceiverWireFactoryActorMessage<T>
-where
-    T: Actor,
-{
-    pub fn new(dest: ReceiverWireFactoryActorMessageDestKind, actor: ActorRef<T>) -> Self {
-        Self {
-            dest,
-            actor,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<T> Message<ReceiverWireFactoryActorMessage<T>> for WireFactoryActor
-where
-    T: Sendable + Message<T::Msg>,
-{
-    type Reply = (Vec<ActorRef<ReceiverWireActor<T>>>, LocatorList);
+impl Message<ReceiverWireFactoryActorMessage> for WireFactoryActor {
+    type Reply = (Vec<ActorRef<ReceiverWireActor>>, LocatorList);
 
     async fn handle(
         &mut self,
-        msg: ReceiverWireFactoryActorMessage<T>,
+        msg: ReceiverWireFactoryActorMessage,
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        let ReceiverWireFactoryActorMessage {
-            dest,
-            actor,
-            _phantom,
-        } = msg;
-        match dest {
-            ReceiverWireFactoryActorMessageDestKind::Applicative => {
+        match msg {
+            ReceiverWireFactoryActorMessage::Applicative => {
                 let wire = self
                     .build_user_wire(Some(Ipv4Addr::new(127, 0, 0, 1)))
                     .unwrap();
                 let locator = wire.locator();
-                let receiver_wire_actor = ReceiverWireActor::spawn((actor, wire));
+                let receiver_wire_actor = ReceiverWireActor::spawn(wire);
                 (vec![receiver_wire_actor], LocatorList::new(vec![locator]))
             }
-            ReceiverWireFactoryActorMessageDestKind::SPDP => {
+            ReceiverWireFactoryActorMessage::SPDP => {
                 let wire = self.build_discovery_listener_multicast_wire().unwrap();
                 let locator = wire.locator();
-                let receiver_wire_actor = ReceiverWireActor::spawn((actor, wire));
+                let receiver_wire_actor = ReceiverWireActor::spawn(wire);
                 (vec![receiver_wire_actor], LocatorList::new(vec![locator]))
             }
-            ReceiverWireFactoryActorMessageDestKind::SEDP => {
+            ReceiverWireFactoryActorMessage::SEDP => {
                 let wire = self.build_discovery_unicast_wire().unwrap();
                 let locator = wire.locator();
-                let receiver_wire_actor = ReceiverWireActor::spawn((actor, wire));
+                let receiver_wire_actor = ReceiverWireActor::spawn(wire);
                 (vec![receiver_wire_actor], LocatorList::new(vec![locator]))
             }
         }
@@ -357,30 +329,67 @@ impl Actor for SenderWireActor {
     }
 }
 
-#[derive(Debug)]
-pub struct ReceiverWireActor<T> {
-    _phantom: PhantomData<T>,
+pub enum ReceiverWireActorMessage<T>
+where
+    T: Actor,
+{
+    Start { actor_dest: ActorRef<T> },
+    Stop,
 }
 
-impl<T> Actor for ReceiverWireActor<T>
+impl<T> Message<ReceiverWireActorMessage<T>> for ReceiverWireActor
 where
     T: Sendable + Message<T::Msg>,
 {
-    type Args = (ActorRef<T>, Wire);
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: ReceiverWireActorMessage<T>,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        let mut wire = self.wire.take().unwrap();
+        let notifier = self.notifier.clone();
+        match msg {
+            ReceiverWireActorMessage::Start { actor_dest } => {
+                tokio::spawn(async move {
+                    loop {
+                        select! {
+                            _ = notifier.notified() => {
+                                break;
+                            }
+                            recv_result = wire.recv() => {
+                                if let Ok(msg) = recv_result {
+                                    actor_dest.tell(T::build_message(msg)).await.unwrap();
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            ReceiverWireActorMessage::Stop => notifier.notify_one(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ReceiverWireActor {
+    notifier: Arc<Notify>,
+    wire: Option<Wire>,
+}
+
+impl Actor for ReceiverWireActor {
+    type Args = Wire;
 
     type Error = WireError;
 
     async fn on_start(
-        mut wire: Self::Args,
+        args: Self::Args,
         _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        tokio::spawn(async move {
-            while let Ok(msg) = wire.1.recv().await {
-                wire.0.tell(T::build_message(msg)).await.unwrap();
-            }
-        });
-        Ok(ReceiverWireActor::<T> {
-            _phantom: PhantomData,
+        Ok(ReceiverWireActor {
+            notifier: Arc::new(Notify::new()),
+            wire: Some(args),
         })
     }
 }

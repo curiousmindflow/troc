@@ -6,6 +6,7 @@ use std::{
 };
 
 use bytes::BytesMut;
+use chrono::Utc;
 use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Deserialize;
 use tokio::{
@@ -33,8 +34,11 @@ use crate::{
         DataReaderListener, condition::ReadCondition, data_sample::DataSample,
         sample_info::SampleInfo,
     },
-    time::{TimerActor, TimerActorMessage},
-    wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage},
+    time::{TimerActor, TimerActorScheduleTickMessage},
+    wires::{
+        ReceiverWireActor, ReceiverWireActorMessage, Sendable, SenderWireActor,
+        SenderWireActorMessage,
+    },
 };
 
 #[derive(Debug)]
@@ -243,7 +247,7 @@ pub enum DataReaderActorMessage {
     },
     Tick,
     AddInputWire {
-        wires: Vec<ActorRef<ReceiverWireActor<DataReaderActor>>>,
+        wires: Vec<ActorRef<ReceiverWireActor>>,
         locators: LocatorList,
     },
 }
@@ -256,6 +260,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
         msg: DataReaderActorMessage,
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
+        let now = Utc::now().timestamp_millis();
         match msg {
             DataReaderActorMessage::IncomingMessage { message } => {
                 let message = tokio::task::spawn_blocking(move || {
@@ -263,7 +268,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                 })
                 .await
                 .unwrap();
-                self.reader.ingest(&mut self.effects, message).unwrap()
+                self.reader.ingest(&mut self.effects, now, message).unwrap()
             }
             DataReaderActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
@@ -275,8 +280,15 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                 }
                 self.reader.remove_proxy(guid)
             }
-            DataReaderActorMessage::Tick => self.reader.tick(&mut self.effects),
+            DataReaderActorMessage::Tick => self.reader.tick(&mut self.effects, now),
             DataReaderActorMessage::AddInputWire { wires, locators } => {
+                for wire in &wires {
+                    wire.tell(ReceiverWireActorMessage::Start {
+                        actor_dest: ctx.actor_ref().clone(),
+                    })
+                    .await
+                    .unwrap();
+                }
                 self.input_wires.extend(wires);
                 self.reader.add_unicast_locators(locators);
             }
@@ -313,7 +325,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                 }
                 Effect::ScheduleTick { delay } => {
                     self.timer
-                        .tell(TimerActorMessage::ScheduleReaderTick {
+                        .tell(TimerActorScheduleTickMessage::Reader {
                             delay,
                             target: ctx.actor_ref().clone(),
                         })
@@ -341,7 +353,7 @@ pub struct DataReaderActor {
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
-    input_wires: Vec<ActorRef<ReceiverWireActor<DataReaderActor>>>,
+    input_wires: Vec<ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
     data_availability_notifier: Arc<Notify>,
 }

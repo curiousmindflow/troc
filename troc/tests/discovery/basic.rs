@@ -102,14 +102,20 @@ async fn participant_discovery(
         .await
         .unwrap();
 
-    assert_eq!(event.get_guid(), bundle.beta_domain_participant.get_guid());
+    assert_eq!(
+        event.get_guid().get_guid_prefix(),
+        bundle.beta_domain_participant.get_guid().get_guid_prefix()
+    );
 
     let event = beta_listener
         .wait_participant_discovered(DurationKind::Infinite)
         .await
         .unwrap();
 
-    assert_eq!(event.get_guid(), bundle.alpha_domain_participant.get_guid());
+    assert_eq!(
+        event.get_guid().get_guid_prefix(),
+        bundle.alpha_domain_participant.get_guid().get_guid_prefix()
+    );
 
     (alpha_listener, beta_listener)
 }

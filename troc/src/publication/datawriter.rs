@@ -4,10 +4,14 @@ use crate::{
     discovery::DiscoveryActor,
     infrastructure::QosPolicy,
     publication::DataWriterListener,
-    time::{TimerActor, TimerActorMessage},
-    wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage},
+    time::{TimerActor, TimerActorScheduleTickMessage},
+    wires::{
+        ReceiverWireActor, ReceiverWireActorMessage, Sendable, SenderWireActor,
+        SenderWireActorMessage,
+    },
 };
 use bytes::BytesMut;
+use chrono::Utc;
 use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Serialize;
 
@@ -52,21 +56,22 @@ impl<T> DataWriter<T> {
         unimplemented!()
     }
 
-    pub async fn write(&mut self, data: T) -> Result<SequenceNumber, DdsError>
+    pub async fn write(&mut self, data: T) -> Result<(), DdsError>
     where
         T: Serialize + Keyed,
     {
         let key = data.key().unwrap();
         let data = cdr::serialize::<_, _, CdrLe>(&data, Infinite).unwrap();
         let data = SerializedData::from_vec(data);
-        self.write_raw(data, InstanceHandle(key)).await
+        self.write_raw(data, InstanceHandle(key)).await.unwrap();
+        Ok(())
     }
 
     pub async fn write_raw(
         &mut self,
         data: SerializedData,
         key: InstanceHandle,
-    ) -> Result<SequenceNumber, DdsError> {
+    ) -> Result<(), DdsError> {
         self.data_writer_actor
             .tell(DataWriterActorMessage::Write {
                 data,
@@ -74,7 +79,7 @@ impl<T> DataWriter<T> {
             })
             .await
             .unwrap();
-        todo!()
+        Ok(())
     }
 
     // TODO: should not be used
@@ -103,7 +108,7 @@ pub enum DataWriterActorMessage {
     },
     Tick,
     AddInputWire {
-        wires: Vec<ActorRef<ReceiverWireActor<DataWriterActor>>>,
+        wires: Vec<ActorRef<ReceiverWireActor>>,
         locators: LocatorList,
     },
 }
@@ -116,6 +121,7 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
         msg: DataWriterActorMessage,
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
+        let now = Utc::now().timestamp_millis();
         match msg {
             DataWriterActorMessage::Write { data, instance } => {
                 let change = self
@@ -129,7 +135,7 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 })
                 .await
                 .unwrap();
-                self.writer.ingest(&mut self.effects, message).unwrap()
+                self.writer.ingest(&mut self.effects, now, message).unwrap()
             }
             DataWriterActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
@@ -141,8 +147,15 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 }
                 self.writer.remove_proxy(guid)
             }
-            DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects),
+            DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects, now),
             DataWriterActorMessage::AddInputWire { wires, locators } => {
+                for wire in &wires {
+                    wire.tell(ReceiverWireActorMessage::Start {
+                        actor_dest: ctx.actor_ref().clone(),
+                    })
+                    .await
+                    .unwrap();
+                }
                 self.input_wires.extend(wires);
                 self.writer.add_unicast_locators(locators);
             }
@@ -176,7 +189,7 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 }
                 Effect::ScheduleTick { delay } => {
                     self.timer
-                        .tell(TimerActorMessage::ScheduleWriterTick {
+                        .tell(TimerActorScheduleTickMessage::Writer {
                             delay,
                             target: ctx.actor_ref().clone(),
                         })
@@ -203,7 +216,7 @@ pub struct DataWriterActor {
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
-    input_wires: Vec<ActorRef<ReceiverWireActor<DataWriterActor>>>,
+    input_wires: Vec<ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
 }
 

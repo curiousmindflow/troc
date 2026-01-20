@@ -21,9 +21,7 @@ use crate::{
     },
     time::TimerActor,
     topic::Topic,
-    wires::{
-        ReceiverWireFactoryActorMessage, ReceiverWireFactoryActorMessageDestKind, WireFactoryActor,
-    },
+    wires::{ReceiverWireFactoryActorMessage, WireFactoryActor},
 };
 
 #[derive(Clone)]
@@ -108,10 +106,7 @@ impl Subscriber {
 
         let (input_wires, locators) = self
             .wire_factory
-            .ask(ReceiverWireFactoryActorMessage::<DataReaderActor>::new(
-                ReceiverWireFactoryActorMessageDestKind::Applicative,
-                reader_actor.clone(),
-            ))
+            .ask(ReceiverWireFactoryActorMessage::Applicative)
             .await
             .unwrap();
 
