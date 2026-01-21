@@ -570,8 +570,9 @@ impl Discovery {
         Ok(())
     }
 
+    // TODO: when a match occurs, discovery must creates SenderWire(s) and other structures to setup the local endpoint
     /// Associate local Readers to remote Writers
-    fn associate_readers(&self, effects: &mut Effects) -> Result<(), Error> {
+    fn associate_readers(&mut self, effects: &mut Effects) -> Result<(), Error> {
         let potential_matches = self
             .edp_pub_detector
             .get_all_available_changes(SampleStateKind::Any);
@@ -587,7 +588,13 @@ impl Discovery {
                 return Ok(());
             };
 
-            for (_id, reader_match_infos) in self.application_readers_infos.iter() {
+            let remote_writer_guid = disc_writer_data.proxy.get_remote_writer_guid();
+
+            for (_id, reader_match_infos) in self.application_readers_infos.iter_mut() {
+                if reader_match_infos.matches.contains(&remote_writer_guid) {
+                    continue;
+                }
+
                 if let Err(_e) = QosPolicyConsistencyChecker::check(
                     &disc_writer_data.params,
                     &reader_match_infos.disc_data.params,
@@ -598,11 +605,6 @@ impl Discovery {
                         remote_writer_infos: disc_writer_data.clone(),
                     };
                     effects.push(effect);
-                    event!(
-                        Level::WARN,
-                        reader_match_infos = ?reader_match_infos,
-                        "associate readers: failure"
-                    );
                 }
 
                 let effect = Effect::ReaderMatch {
@@ -611,20 +613,16 @@ impl Discovery {
                     remote_writer_infos: disc_writer_data.clone(),
                 };
                 effects.push(effect);
-
-                event!(
-                    Level::WARN,
-                    reader_match_infos = ?reader_match_infos,
-                    "associate readers: success"
-                );
+                reader_match_infos.matches.insert(remote_writer_guid);
             }
         }
 
         Ok(())
     }
 
+    // TODO: when a match occurs, discovery must creates SenderWire(s) and other structures to setup the local endpoint
     /// Associate local Writers to remote Readers
-    fn associate_writers(&self, effects: &mut Effects) -> Result<(), Error> {
+    fn associate_writers(&mut self, effects: &mut Effects) -> Result<(), Error> {
         let potential_matches = self
             .edp_sub_detector
             .get_all_available_changes(SampleStateKind::Any);
@@ -640,7 +638,13 @@ impl Discovery {
                 return Ok(());
             };
 
-            for (_id, writer_match_infos) in self.application_writers_infos.iter() {
+            let remote_reader_guid = disc_reader_data.proxy.get_remote_reader_guid();
+
+            for (_id, writer_match_infos) in self.application_writers_infos.iter_mut() {
+                if writer_match_infos.matches.contains(&remote_reader_guid) {
+                    continue;
+                }
+
                 if let Err(_e) = QosPolicyConsistencyChecker::check(
                     &writer_match_infos.disc_data.params,
                     &disc_reader_data.params,
@@ -651,11 +655,6 @@ impl Discovery {
                         remote_reader_infos: disc_reader_data.clone(),
                     };
                     effects.push(effect);
-                    event!(
-                        Level::WARN,
-                        writer_match_infos = ?writer_match_infos,
-                        "associate readers: failure"
-                    );
                 }
 
                 let effect = Effect::WriterMatch {
@@ -664,12 +663,7 @@ impl Discovery {
                     remote_reader_infos: disc_reader_data.clone(),
                 };
                 effects.push(effect);
-
-                event!(
-                    Level::WARN,
-                    writer_match_infos = ?writer_match_infos,
-                    "associate readers: success"
-                );
+                writer_match_infos.matches.insert(remote_reader_guid);
             }
         }
 
