@@ -13,10 +13,8 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use tokio::{
-    select,
-    sync::{Notify, mpsc::channel},
-};
+use tokio::{select, sync::Notify};
+use tracing::{Level, event};
 use troc_core::{Locator, LocatorKind, LocatorList};
 
 pub trait Sendable: Actor + Sized {
@@ -39,7 +37,24 @@ impl Message<SenderWireFactoryActorMessage> for WireFactoryActor {
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         match msg {
-            SenderWireFactoryActorMessage::FromLocators { locators } => todo!(),
+            SenderWireFactoryActorMessage::FromLocators { locators } => {
+                let mut wires = Vec::default();
+                for locator in locators.iter() {
+                    match locator.kind {
+                        LocatorKind::UdpV4 => {
+                            let wired = UdpV4Wire::new_sender(locator, true).unwrap();
+                            let wire = Wire::new(Box::new(wired));
+                            let sender_wire_actor =
+                                SenderWireActor::spawn(SenderWireActor { wire });
+                            wires.push(sender_wire_actor);
+                        }
+                        _ => {
+                            event!(Level::ERROR, "unsupported locator kind");
+                        }
+                    }
+                }
+                (wires, locators)
+            }
             SenderWireFactoryActorMessage::SPDP => {
                 let wire = self.build_discovery_sender_multicast_wire().unwrap();
                 let locator = wire.locator();

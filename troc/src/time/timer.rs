@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use kameo::{Actor, actor::ActorRef, error::Infallible, prelude::Message};
 use tokio::time::sleep;
+use troc_core::TickId;
 
 use crate::{
     discovery::{DiscoveryActor, DiscoveryActorMessage},
@@ -22,6 +23,7 @@ pub enum TimerActorScheduleTickMessage {
     Discovery {
         delay: i64,
         target: ActorRef<DiscoveryActor>,
+        id: TickId,
     },
 }
 
@@ -46,10 +48,10 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
                     target.tell(DataReaderActorMessage::Tick).await.unwrap()
                 });
             }
-            TimerActorScheduleTickMessage::Discovery { delay, target } => {
+            TimerActorScheduleTickMessage::Discovery { delay, target, id } => {
                 tokio::spawn(async move {
                     sleep(Duration::from_millis(delay as u64)).await;
-                    target.tell(DiscoveryActorMessage::Tick).await.unwrap()
+                    target.tell(DiscoveryActorMessage::Tick(id)).await.unwrap()
                 });
             }
         }

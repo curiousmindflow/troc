@@ -187,7 +187,7 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                         }
                     }
                 }
-                Effect::ScheduleTick { delay } => {
+                Effect::ScheduleTick { id: _, delay } => {
                     self.timer
                         .tell(TimerActorScheduleTickMessage::Writer {
                             delay,

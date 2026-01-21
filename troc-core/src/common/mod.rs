@@ -10,7 +10,7 @@ pub use cache_change::{
     CacheChange, CacheChangeContainer, CacheChangeInfos, FragmentedCacheChange,
 };
 pub use counter::Counter;
-pub use effect::{Effect, EffectConsumption, Effects};
+pub use effect::{Effect, EffectConsumption, Effects, TickId};
 pub use error::Error;
 pub use qos_matcher::QosPolicyConsistencyChecker;
 pub use reader_proxy::ReaderProxy;

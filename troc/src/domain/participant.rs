@@ -7,7 +7,7 @@ use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tracing::{Level, event};
 use troc_core::builtin_endpoint_qos::BuiltinEndpointQos;
 use troc_core::domain_id::DomainId;
-use troc_core::{DdsError, DiscoveryBuilder, DiscoveryConfiguration, Locator};
+use troc_core::{DdsError, DiscoveryBuilder, DiscoveryConfiguration, Locator, TickId};
 use troc_core::{DomainTag, EntityId, EntityKey};
 use troc_core::{
     ENTITYID_PARTICIPANT, Guid, ParticipantProxy, TopicKind, VENDORID_UNKNOWN,
@@ -382,6 +382,7 @@ impl Actor for DomainParticipantActor {
             discovery,
             event_sender,
             timer: timer.clone(),
+            wire_factory: wire_factory.clone(),
         });
         discovery.wait_for_startup().await;
         actor_ref.link(&discovery).await;
@@ -433,7 +434,7 @@ impl Actor for DomainParticipantActor {
             .unwrap();
 
         discovery
-            .tell(DiscoveryActorMessage::Tick {})
+            .tell(DiscoveryActorMessage::Tick(TickId::ParticipantAnnounce))
             .await
             .unwrap();
 

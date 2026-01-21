@@ -129,7 +129,7 @@ impl Subscriber {
         self.subscriber_actor
             .ask(SubscriberActorMessage {
                 proxy: reader_proxy,
-                writer: reader_actor,
+                readers: reader_actor,
             })
             .await
             .unwrap();
@@ -141,7 +141,7 @@ impl Subscriber {
 #[derive(Debug)]
 pub struct SubscriberActorMessage {
     proxy: ReaderProxy,
-    writer: ActorRef<DataReaderActor>,
+    readers: ActorRef<DataReaderActor>,
 }
 
 impl Message<SubscriberActorMessage> for SubscriberActor {
@@ -152,10 +152,11 @@ impl Message<SubscriberActorMessage> for SubscriberActor {
         msg: SubscriberActorMessage,
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        self.readers.push(msg.writer);
+        self.readers.push(msg.readers.clone());
         self.discovery
             .ask(DiscoveryActorMessage::ReaderCreated {
                 reader_proxy: msg.proxy,
+                actor: msg.readers,
             })
             .await
             .unwrap();

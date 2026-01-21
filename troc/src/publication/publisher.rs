@@ -145,10 +145,11 @@ impl Message<PublisherActorMessage> for PublisherActor {
         msg: PublisherActorMessage,
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
-        self.writers.push(msg.writer);
+        self.writers.push(msg.writer.clone());
         self.discovery
             .ask(DiscoveryActorMessage::WriterCreated {
                 writer_proxy: msg.proxy,
+                actor: msg.writer,
             })
             .await
             .unwrap();

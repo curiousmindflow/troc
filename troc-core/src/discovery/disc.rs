@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     LocatorList,
+    common::TickId,
     messages::{Message, Submessage, SubmessageContent},
     types::{
         ChangeKind, ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
@@ -130,6 +131,7 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::PublicationAnnouncer)
         .build();
 
         let edp_sub_announcer = WriterBuilder::new(
@@ -140,6 +142,7 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::SubscriptionAnnouncer)
         .build();
 
         let edp_pub_detector = ReaderBuilder::new(
@@ -150,6 +153,7 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::PublicationDetector)
         .build();
 
         let edp_sub_detector = ReaderBuilder::new(
@@ -160,6 +164,7 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::SubscriptionDetector)
         .build();
 
         Discovery {
@@ -434,33 +439,53 @@ impl Discovery {
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields())]
-    pub fn tick(&mut self, effects: &mut Effects, now_ms: i64) -> Result<(), Error> {
-        let announce_diff = now_ms - self.last_announcement_timestamp_ms;
-        // dbg!(self.last_announcement_timestamp_ms);
-        // dbg!(now_ms);
-        // dbg!(announce_diff);
-        // dbg!(self.config.announcement_period);
-        if announce_diff >= self.config.announcement_period {
-            self.produce_participant_announce(effects)?;
-            self.last_announcement_timestamp_ms = now_ms;
-            // dbg!(self.last_announcement_timestamp_ms);
-        } else {
-            event!(
-                Level::TRACE, announcement_period = %self.config.announcement_period, last_announce = %announce_diff,
-                "Discovery announcement prevented: announcement period duration not yet elapsed"
-            );
+    pub fn tick(
+        &mut self,
+        effects: &mut Effects,
+        now_ms: i64,
+        tick_id: TickId,
+    ) -> Result<(), Error> {
+        match tick_id {
+            TickId::ParticipantAnnounce => {
+                let announce_diff = now_ms - self.last_announcement_timestamp_ms;
+                // dbg!(self.last_announcement_timestamp_ms);
+                // dbg!(now_ms);
+                // dbg!(announce_diff);
+                // dbg!(self.config.announcement_period);
+                if announce_diff >= self.config.announcement_period {
+                    self.produce_participant_announce(effects)?;
+                    self.last_announcement_timestamp_ms = now_ms;
+                    // dbg!(self.last_announcement_timestamp_ms);
+                } else {
+                    event!(
+                        Level::TRACE, announcement_period = %self.config.announcement_period, last_announce = %announce_diff,
+                        "Discovery announcement prevented: announcement period duration not yet elapsed"
+                    );
+                }
+
+                effects.push(Effect::ScheduleTick {
+                    delay: self.config.announcement_period,
+                    id: TickId::ParticipantAnnounce,
+                });
+            }
+            TickId::ParticipantRemoval => {
+                // self.remove_participant(effects, now_ms)?;
+                todo!()
+            }
+            TickId::PublicationAnnouncer => {
+                self.edp_pub_announcer.tick(effects, now_ms);
+            }
+            TickId::PublicationDetector => {
+                self.edp_pub_detector.tick(effects, now_ms);
+            }
+            TickId::SubscriptionAnnouncer => {
+                self.edp_sub_announcer.tick(effects, now_ms);
+            }
+            TickId::SubscriptionDetector => {
+                self.edp_sub_detector.tick(effects, now_ms);
+            }
+            _ => unreachable!(),
         }
-
-        // self.remove_participant(effects, now_ms)?;
-        self.edp_pub_announcer.tick(effects, now_ms);
-        self.edp_sub_announcer.tick(effects, now_ms);
-        self.edp_pub_detector.tick(effects, now_ms);
-        self.edp_sub_detector.tick(effects, now_ms);
-
-        // effects.push(Effect::ScheduleTick {
-        //     delay: self.config.announcement_period,
-        // });
-        effects.push(Effect::ScheduleTick { delay: 2000 });
 
         event!(Level::DEBUG, "Discovery ticked");
 
@@ -822,6 +847,7 @@ mod tests {
 
     use crate::{
         LocatorKind,
+        common::TickId,
         messages::MessageFactory,
         types::{
             ContentNature, DomainTag, ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER, Guid,
@@ -844,7 +870,9 @@ mod tests {
     fn announce(#[from(setup_discovery)] mut discovery: Discovery) {
         let mut effects = Effects::new();
 
-        discovery.tick(&mut effects, 1000).unwrap();
+        discovery
+            .tick(&mut effects, 1000, TickId::ParticipantAnnounce)
+            .unwrap();
 
         let message_effect =
             effects.find(|current_effect| matches!(current_effect, Effect::Message { .. }));

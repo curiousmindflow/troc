@@ -3,6 +3,7 @@ use std::{collections::HashMap, fmt::Debug};
 use crate::{
     ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER, ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER,
     LocatorList, ReaderProxy,
+    common::TickId,
     messages::{
         GapGroupInfo, HeartbeatGroupInfo, Message, MessageFactory, MessageReceiver,
         SubmessageContent,
@@ -25,10 +26,19 @@ use crate::{
     },
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ReaderConfiguration {
     heartbeat_response_delay_ms: i64,
     heartbeat_suppression_delay_ms: i64,
+}
+
+impl Default for ReaderConfiguration {
+    fn default() -> Self {
+        Self {
+            heartbeat_response_delay_ms: 200,
+            heartbeat_suppression_delay_ms: 0,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -40,6 +50,7 @@ pub struct ReaderBuilder {
     unicast_locator_list: LocatorList,
     multicast_locator_list: LocatorList,
     config: ReaderConfiguration,
+    tick_id: TickId,
 }
 
 impl ReaderBuilder {
@@ -48,6 +59,7 @@ impl ReaderBuilder {
             guid,
             qos,
             reliability: ReliabilityKind::BestEffort,
+            tick_id: TickId::Reader,
             ..Default::default()
         }
     }
@@ -59,6 +71,11 @@ impl ReaderBuilder {
 
     pub fn with_configuration(mut self, config: ReaderConfiguration) -> Self {
         self.config = config;
+        self
+    }
+
+    pub fn with_tick_id(mut self, tick_id: TickId) -> Self {
+        self.tick_id = tick_id;
         self
     }
 
@@ -80,6 +97,7 @@ impl ReaderBuilder {
             unicast_locator_list,
             multicast_locator_list,
             config,
+            tick_id,
         } = self;
         let matched_writers = Default::default();
         let depth = match &qos.history {
@@ -105,6 +123,7 @@ impl ReaderBuilder {
             unicast_locator_list,
             multicast_locator_list,
             config,
+            tick_id,
         }
     }
 }
@@ -122,6 +141,7 @@ pub struct Reader {
     unicast_locator_list: LocatorList,
     multicast_locator_list: LocatorList,
     config: ReaderConfiguration,
+    tick_id: TickId,
 }
 
 impl Reader {
@@ -416,8 +436,8 @@ impl Reader {
 
         for (_guid, proxy) in self.matched_writers.iter_mut() {
             let base = proxy.available_changes_max() + 1;
-            let set: &Vec<SequenceNumber> = &proxy.missing_changes();
-            let missing_set = SequenceNumberSet::new(base, set);
+            let set = proxy.missing_changes();
+            let missing_set = SequenceNumberSet::new(base, &set);
 
             let count = proxy.acknack_counter.increase();
 
@@ -428,41 +448,41 @@ impl Reader {
                 .writer(proxy.remote_writer_guid.get_entity_id())
                 .acknack(missing_set, count);
 
-            let missing_changes_seq = proxy.missing_changes();
+            // let missing_changes_seq = proxy.missing_changes();
 
-            for missing_change_seq in missing_changes_seq {
-                let missing_set = if let Some(change) = self
-                    .cache
-                    .get_fragmented_change(proxy.get_remote_writer_guid(), missing_change_seq)
-                {
-                    let missing_frags = change.get_missing_fragments_number();
+            // for missing_change_seq in missing_changes_seq {
+            //     let missing_set = if let Some(change) = self
+            //         .cache
+            //         .get_fragmented_change(proxy.get_remote_writer_guid(), missing_change_seq)
+            //     {
+            //         let missing_frags = change.get_missing_fragments_number();
 
-                    if missing_frags.is_empty() {
-                        continue;
-                    }
+            //         if missing_frags.is_empty() {
+            //             continue;
+            //         }
 
-                    let missing_frags = missing_frags
-                        .into_iter()
-                        .map(|f| FragmentNumber(f.0 + 1))
-                        .collect::<Vec<_>>();
-                    let base = missing_frags.first().unwrap();
-                    FragmentNumberSet::new(*base, &missing_frags)
-                } else {
-                    let Some(last_missing_frag) = proxy.last_announced_frag(missing_change_seq)
-                    else {
-                        continue;
-                    };
+            //         let missing_frags = missing_frags
+            //             .into_iter()
+            //             .map(|f| FragmentNumber(f.0 + 1))
+            //             .collect::<Vec<_>>();
+            //         let base = missing_frags.first().unwrap();
+            //         FragmentNumberSet::new(*base, &missing_frags)
+            //     } else {
+            //         let Some(last_missing_frag) = proxy.last_announced_frag(missing_change_seq)
+            //         else {
+            //             continue;
+            //         };
 
-                    let missing_frags = (0..=last_missing_frag.0)
-                        .map(|f| FragmentNumber(f + 1))
-                        .collect::<Vec<_>>();
-                    FragmentNumberSet::new(FragmentNumber(1), &missing_frags)
-                };
+            //         let missing_frags = (0..=last_missing_frag.0)
+            //             .map(|f| FragmentNumber(f + 1))
+            //             .collect::<Vec<_>>();
+            //         FragmentNumberSet::new(FragmentNumber(1), &missing_frags)
+            //     };
 
-                let count = proxy.nackfrag_counter.increase();
+            //     let count = proxy.nackfrag_counter.increase();
 
-                msg = msg.nackfrag(missing_change_seq, missing_set, count);
-            }
+            //     msg = msg.nackfrag(missing_change_seq, missing_set, count);
+            // }
 
             let message = msg.build();
 
@@ -473,17 +493,17 @@ impl Reader {
             };
 
             effects.push(effect);
+
+            event!(
+                Level::WARN,
+                remote_writer_guid = %proxy.get_remote_writer_guid(),
+                %base,
+                ?set,
+                "ACKNACK produced"
+            );
         }
 
         event!(Level::DEBUG, "Reader ticked");
-
-        // // FIXME: tmp
-        // let changes = self
-        //     .cache
-        //     .get_changes()
-        //     .map(|c| c.get_sequence_number())
-        //     .collect::<Vec<_>>();
-        // event!(Level::WARN, ?changes, "changes in cache");
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
@@ -680,7 +700,7 @@ impl Reader {
             .map(|c| c.get_sequence_number())
             .collect::<Vec<_>>();
 
-        event!(Level::WARN, ?changes, "DATA processed");
+        event!(Level::DEBUG, ?changes, "DATA processed");
 
         Ok(())
     }
@@ -762,12 +782,13 @@ impl Reader {
 
         if is_final && are_missings {
             let effect = Effect::ScheduleTick {
+                id: self.tick_id,
                 delay: self.config.heartbeat_response_delay_ms,
             };
             effects.push(effect);
         }
 
-        event!(Level::DEBUG, "HEARTBEAT processed");
+        event!(Level::DEBUG, is_final, missings = ?missings, "HEARTBEAT processed");
 
         Ok(())
     }
@@ -924,6 +945,7 @@ impl Reader {
 
         if are_missings {
             let effect = Effect::ScheduleTick {
+                id: self.tick_id,
                 delay: self.config.heartbeat_response_delay_ms,
             };
             effects.push(effect);

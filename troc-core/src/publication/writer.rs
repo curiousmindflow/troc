@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
+    common::TickId,
     messages::{Message, MessageFactory, MessageReceiver, SubmessageContent},
     types::{
         ChangeKind, ContentNature, ENTITYID_UNKOWN, EntityId, FragmentNumber, Guid,
@@ -50,6 +51,7 @@ pub struct WriterBuilder {
     unicast_locator_list: LocatorList,
     multicast_locator_list: LocatorList,
     config: WriterConfiguration,
+    tick_id: TickId,
 }
 
 impl WriterBuilder {
@@ -72,6 +74,11 @@ impl WriterBuilder {
         self
     }
 
+    pub fn with_tick_id(mut self, tick_id: TickId) -> Self {
+        self.tick_id = tick_id;
+        self
+    }
+
     pub fn with_unicast_locators(mut self, locators: LocatorList) -> Self {
         self.unicast_locator_list = locators;
         self
@@ -90,6 +97,7 @@ impl WriterBuilder {
             unicast_locator_list,
             multicast_locator_list,
             config,
+            tick_id,
         } = self;
         let matched_readers = Default::default();
         let depth = match qos.history {
@@ -112,6 +120,7 @@ impl WriterBuilder {
             unicast_locator_list,
             multicast_locator_list,
             config,
+            tick_id,
         }
     }
 }
@@ -131,6 +140,7 @@ pub struct Writer {
     unicast_locator_list: LocatorList,
     multicast_locator_list: LocatorList,
     config: WriterConfiguration,
+    tick_id: TickId,
 }
 
 impl Writer {
@@ -233,7 +243,10 @@ impl Writer {
                     // let effect = Effect::ScheduleTick {
                     //     delay: self.config.nack_response_delay_ms,
                     // };
-                    let effect = Effect::ScheduleTick { delay: 2000 };
+                    let effect = Effect::ScheduleTick {
+                        id: self.tick_id,
+                        delay: 2000,
+                    };
                     effects.push(effect);
 
                     event!(Level::TRACE, "ACKNACK processed");
@@ -517,6 +530,7 @@ impl Writer {
 #[cfg(test)]
 mod test {
     use crate::{
+        common::TickId,
         messages::{Message, MessageFactory},
         types::{
             ChangeKind, Count, EntityId, Guid, InlineQos, InstanceHandle, LocatorList,
@@ -590,7 +604,11 @@ mod test {
         writer.ingest(&mut effects, now, message).unwrap();
 
         effects.consume(|e| {
-            let Effect::ScheduleTick { delay } = e else {
+            let Effect::ScheduleTick {
+                id: TickId::Writer,
+                delay,
+            } = e
+            else {
                 panic!()
             };
             // TODO: maybe check delay value

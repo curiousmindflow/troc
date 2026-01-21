@@ -8,15 +8,18 @@ use tokio::sync::broadcast::Sender;
 use tracing::{Level, event, instrument, span};
 use troc_core::{
     DdsError, Discovery as ProtocolDiscovery, Effect, Effects, GuidPrefix, Locator, ReaderProxy,
-    WriterProxy,
+    TickId, WriterProxy,
 };
 
 use troc_core::{EntityId, InlineQos, ParticipantProxy};
 
 use crate::ParticipantEvent;
+use crate::publication::{DataWriterActor, DataWriterActorMessage};
+use crate::subscription::{DataReaderActor, DataReaderActorMessage};
 use crate::time::{TimerActor, TimerActorScheduleTickMessage};
 use crate::wires::{
     ReceiverWireActor, ReceiverWireActorMessage, Sendable, SenderWireActor, SenderWireActorMessage,
+    SenderWireFactoryActorMessage, WireFactoryActor,
 };
 
 #[derive(Debug)]
@@ -24,13 +27,15 @@ pub enum DiscoveryActorMessage {
     ParticipantProxyChanged(ParticipantProxy),
     WriterCreated {
         writer_proxy: WriterProxy,
+        actor: ActorRef<DataWriterActor>,
     },
     WriterRemoved(EntityId),
     ReaderCreated {
         reader_proxy: ReaderProxy,
+        actor: ActorRef<DataReaderActor>,
     },
     ReaderRemoved(EntityId),
-    Tick,
+    Tick(TickId),
     IncomingMessage {
         message: BytesMut,
     },
@@ -58,7 +63,12 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     .update_participant_infos(&mut self.effects, participant_proxy)
                     .unwrap();
             }
-            DiscoveryActorMessage::WriterCreated { writer_proxy } => {
+            DiscoveryActorMessage::WriterCreated {
+                writer_proxy,
+                actor,
+            } => {
+                self.local_writers
+                    .insert(writer_proxy.get_remote_writer_guid().get_entity_id(), actor);
                 self.discovery
                     .add_publications_infos(&mut self.effects, writer_proxy, InlineQos::default())
                     .unwrap();
@@ -66,7 +76,12 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
             DiscoveryActorMessage::WriterRemoved(entity_id) => {
                 self.discovery.remove_publications_infos(entity_id).unwrap();
             }
-            DiscoveryActorMessage::ReaderCreated { reader_proxy } => {
+            DiscoveryActorMessage::ReaderCreated {
+                reader_proxy,
+                actor,
+            } => {
+                self.local_readers
+                    .insert(reader_proxy.get_remote_reader_guid().get_entity_id(), actor);
                 self.discovery
                     .add_subscriptions_infos(&mut self.effects, reader_proxy, InlineQos::default())
                     .unwrap();
@@ -76,8 +91,8 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     .remove_subscriptions_infos(entity_id)
                     .unwrap();
             }
-            DiscoveryActorMessage::Tick => {
-                self.discovery.tick(&mut self.effects, now).unwrap();
+            DiscoveryActorMessage::Tick(id) => {
+                self.discovery.tick(&mut self.effects, now, id).unwrap();
             }
             DiscoveryActorMessage::IncomingMessage { message } => {
                 let Ok(message) = tokio::task::spawn_blocking(move || {
@@ -172,7 +187,7 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     let local_reader_infos_str = local_reader_infos.to_string();
                     let remote_writer_infos_str = remote_writer_infos.to_string();
                     let _res = self.event_sender.send(ParticipantEvent::ReaderDiscovered {
-                        reader_data: local_reader_infos,
+                        reader_data: local_reader_infos.clone(),
                     });
                     event!(
                         Level::DEBUG,
@@ -181,6 +196,44 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                         remote_writer = remote_writer_infos_str,
                         "Effect::ReaderMatch processed"
                     );
+                    if success {
+                        // creates wires and send them to the local Reader that matched
+                        let local_reader = self
+                            .local_readers
+                            .get(
+                                &local_reader_infos
+                                    .proxy
+                                    .get_remote_reader_guid()
+                                    .get_entity_id(),
+                            )
+                            .unwrap();
+
+                        let mut output_wires = Vec::default();
+                        let (sender_many_to_many, sender_locators_many_to_many) = self
+                            .wire_factory
+                            .ask(SenderWireFactoryActorMessage::FromLocators {
+                                locators: remote_writer_infos.proxy.get_locators(),
+                            })
+                            .await
+                            .unwrap();
+                        output_wires.extend(sender_many_to_many);
+
+                        let output_wires: HashMap<Locator, ActorRef<SenderWireActor>> =
+                            HashMap::from_iter(
+                                sender_locators_many_to_many
+                                    .iter()
+                                    .zip(output_wires)
+                                    .map(|(a, b)| (*a, b)),
+                            );
+
+                        local_reader
+                            .tell(DataReaderActorMessage::AddProxy {
+                                proxy: remote_writer_infos.proxy,
+                                wires: output_wires,
+                            })
+                            .await
+                            .unwrap();
+                    }
                 }
                 Effect::WriterMatch {
                     success,
@@ -190,7 +243,7 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     let local_writer_infos_str = local_writer_infos.to_string();
                     let remote_reader_infos_str = remote_reader_infos.to_string();
                     let _res = self.event_sender.send(ParticipantEvent::WriterDiscovered {
-                        writer_data: local_writer_infos,
+                        writer_data: local_writer_infos.clone(),
                     });
                     event!(
                         Level::DEBUG,
@@ -199,12 +252,50 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                         remote_reader = remote_reader_infos_str,
                         "Effect::WriterMatch processed"
                     );
+                    if success {
+                        let local_writer = self
+                            .local_writers
+                            .get(
+                                &local_writer_infos
+                                    .proxy
+                                    .get_remote_writer_guid()
+                                    .get_entity_id(),
+                            )
+                            .unwrap();
+
+                        let mut output_wires = Vec::default();
+                        let (sender_many_to_many, sender_locators_many_to_many) = self
+                            .wire_factory
+                            .ask(SenderWireFactoryActorMessage::FromLocators {
+                                locators: remote_reader_infos.proxy.get_locators(),
+                            })
+                            .await
+                            .unwrap();
+                        output_wires.extend(sender_many_to_many);
+
+                        let output_wires: HashMap<Locator, ActorRef<SenderWireActor>> =
+                            HashMap::from_iter(
+                                sender_locators_many_to_many
+                                    .iter()
+                                    .zip(output_wires)
+                                    .map(|(a, b)| (*a, b)),
+                            );
+
+                        local_writer
+                            .tell(DataWriterActorMessage::AddProxy {
+                                proxy: remote_reader_infos.proxy,
+                                wires: output_wires,
+                            })
+                            .await
+                            .unwrap();
+                    }
                 }
-                Effect::ScheduleTick { delay } => {
+                Effect::ScheduleTick { id, delay } => {
                     self.timer
                         .tell(TimerActorScheduleTickMessage::Discovery {
                             delay,
                             target: ctx.actor_ref().clone(),
+                            id,
                         })
                         .await
                         .unwrap();
@@ -222,6 +313,7 @@ pub struct DiscoveryActorCreateObject {
     pub discovery: ProtocolDiscovery,
     pub event_sender: Sender<ParticipantEvent>,
     pub timer: ActorRef<TimerActor>,
+    pub wire_factory: ActorRef<WireFactoryActor>,
 }
 
 #[derive()]
@@ -230,9 +322,12 @@ pub struct DiscoveryActor {
     discovery: ProtocolDiscovery,
     effects: Effects,
     timer: ActorRef<TimerActor>,
+    wire_factory: ActorRef<WireFactoryActor>,
     event_sender: Sender<ParticipantEvent>,
     input_wires: HashMap<Locator, ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    local_readers: HashMap<EntityId, ActorRef<DataReaderActor>>,
+    local_writers: HashMap<EntityId, ActorRef<DataWriterActor>>,
 }
 
 impl Actor for DiscoveryActor {
@@ -249,9 +344,12 @@ impl Actor for DiscoveryActor {
             discovery: args.discovery,
             effects: Effects::default(),
             timer: args.timer,
+            wire_factory: args.wire_factory,
             event_sender: args.event_sender,
             input_wires: Default::default(),
             output_wires: Default::default(),
+            local_readers: Default::default(),
+            local_writers: Default::default(),
         };
 
         Ok(actor)

@@ -323,7 +323,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                         }
                     }
                 }
-                Effect::ScheduleTick { delay } => {
+                Effect::ScheduleTick { id: _, delay } => {
                     self.timer
                         .tell(TimerActorScheduleTickMessage::Reader {
                             delay,
