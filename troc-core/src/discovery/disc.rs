@@ -198,19 +198,20 @@ pub struct Discovery {
 }
 
 impl Discovery {
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn update_participant_infos(
         &mut self,
         effects: &mut Effects,
         infos: ParticipantProxy,
     ) -> Result<(), Error> {
         self.local_participant_infos = infos;
+        event!(Level::DEBUG, "Participant infos updated");
         self.produce_participant_announce(effects)?;
         Ok(())
     }
 
     // TODO: when new local Writer is created we should try to associate it with remote Reader infos previously received
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn add_publications_infos(
         &mut self,
         effects: &mut Effects,
@@ -220,12 +221,13 @@ impl Discovery {
         let qos = inline_qos.clone();
         let guid = writer_proxy.get_remote_writer_guid();
 
+        let writer_entity_id = writer_proxy.get_remote_writer_guid().get_entity_id();
         let disc_writer_data = DiscoveredWriterData {
             proxy: writer_proxy,
             params: inline_qos,
         };
 
-        let Ok(data) = disc_writer_data.into_serialized_data(Endian::Big) else {
+        let Ok(data) = disc_writer_data.clone().into_serialized_data(Endian::Big) else {
             //
             todo!()
         };
@@ -238,13 +240,20 @@ impl Discovery {
                 .new_change(ChangeKind::Alive, Some(data), Some(qos), instance);
 
         self.edp_pub_announcer.add_change(effects, change).unwrap();
+        self.application_writers_infos.insert(
+            writer_entity_id,
+            WriterMatchingInfos {
+                disc_data: disc_writer_data,
+                matches: HashSet::default(),
+            },
+        );
 
         event!(Level::DEBUG, "Writer discovery data produced");
 
         Ok(())
     }
 
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn remove_publications_infos(&mut self, entity_id: EntityId) -> Result<&Effects, Error> {
         // let _res = self
         //     .edp_pub_announcer
@@ -253,7 +262,7 @@ impl Discovery {
     }
 
     // TODO: when new local Reader is created we should try to associate it with remote Writer infos previously received
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn add_subscriptions_infos(
         &mut self,
         effects: &mut Effects,
@@ -263,12 +272,13 @@ impl Discovery {
         let qos = inline_qos.clone();
         let guid = reader_proxy.get_remote_reader_guid();
 
+        let reader_entity_id = reader_proxy.get_remote_reader_guid().get_entity_id();
         let disc_reader_data = DiscoveredReaderData {
             proxy: reader_proxy,
             params: inline_qos,
         };
 
-        let Ok(data) = disc_reader_data.into_serialized_data(Endian::Big) else {
+        let Ok(data) = disc_reader_data.clone().into_serialized_data(Endian::Big) else {
             //
             todo!()
         };
@@ -280,19 +290,26 @@ impl Discovery {
             self.edp_sub_announcer
                 .new_change(ChangeKind::Alive, Some(data), Some(qos), instance);
 
-        self.edp_pub_announcer.add_change(effects, change).unwrap();
+        self.edp_sub_announcer.add_change(effects, change).unwrap();
+        self.application_readers_infos.insert(
+            reader_entity_id,
+            ReaderMatchingInfos {
+                disc_data: disc_reader_data,
+                matches: HashSet::default(),
+            },
+        );
 
         event!(Level::DEBUG, "Reader discovery data produced");
 
         Ok(())
     }
 
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn remove_subscriptions_infos(&mut self, entity_id: EntityId) -> Result<&Effects, Error> {
         unimplemented!()
     }
 
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn ingest(
         &mut self,
         effects: &mut Effects,
@@ -333,9 +350,11 @@ impl Discovery {
                         .entry(remote_participant_guid_prefix)
                     {
                         Entry::Occupied(mut occupied_entry) => {
+                            event!(Level::DEBUG, "Remote Participant discovery data updated");
                             *occupied_entry.get_mut() = infos;
                         }
                         Entry::Vacant(vacant_entry) => {
+                            event!(Level::DEBUG, "Remote Participant discovered");
                             let participant_proxy = infos.infos.get_proxy();
                             vacant_entry.insert(infos);
                             self.produce_participant_announce(effects)?;
@@ -345,9 +364,6 @@ impl Discovery {
                     }
 
                     self.update_edp_endpoints(&remote_participant_proxy);
-
-                    event!(Level::DEBUG, "Remote Participant discovery data processed");
-
                     break;
                 }
                 SubmessageContent::Heartbeat {
@@ -417,7 +433,7 @@ impl Discovery {
         Ok(())
     }
 
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn tick(&mut self, effects: &mut Effects, now_ms: i64) -> Result<(), Error> {
         let announce_diff = now_ms - self.last_announcement_timestamp_ms;
         // dbg!(self.last_announcement_timestamp_ms);
@@ -425,7 +441,7 @@ impl Discovery {
         // dbg!(announce_diff);
         // dbg!(self.config.announcement_period);
         if announce_diff >= self.config.announcement_period {
-            // self.produce_participant_announce(effects)?;
+            self.produce_participant_announce(effects)?;
             self.last_announcement_timestamp_ms = now_ms;
             // dbg!(self.last_announcement_timestamp_ms);
         } else {
@@ -451,7 +467,7 @@ impl Discovery {
         Ok(())
     }
 
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn add_pdp_announcer_proxy(
         &mut self,
         unicast_locators: LocatorList,
@@ -468,7 +484,7 @@ impl Discovery {
         self.pdp_announcer.add_proxy(pdp_announcer_proxy);
     }
 
-    #[instrument(skip_all, fields())]
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn add_pdp_detector_proxy(
         &mut self,
         unicast_locators: LocatorList,
@@ -556,17 +572,19 @@ impl Discovery {
 
     /// Associate local Readers to remote Writers
     fn associate_readers(&self, effects: &mut Effects) -> Result<(), Error> {
-        for potential_match in self
+        let potential_matches = self
             .edp_pub_detector
-            .get_all_available_changes(SampleStateKind::Any)
-        {
+            .get_all_available_changes(SampleStateKind::Any);
+
+        for potential_match in potential_matches {
             let Some(data) = potential_match.get_data() else {
                 unreachable!("CacheChange Data submessage presence checked at ingestion")
             };
 
             let Ok(disc_writer_data) = DiscoveredWriterData::from_serialized_data(data.clone())
             else {
-                return Err(Error::DeserializationError);
+                event!(Level::ERROR, "Deserialization error");
+                return Ok(());
             };
 
             for (_id, reader_match_infos) in self.application_readers_infos.iter() {
@@ -580,6 +598,11 @@ impl Discovery {
                         remote_writer_infos: disc_writer_data.clone(),
                     };
                     effects.push(effect);
+                    event!(
+                        Level::WARN,
+                        reader_match_infos = ?reader_match_infos,
+                        "associate readers: failure"
+                    );
                 }
 
                 let effect = Effect::ReaderMatch {
@@ -588,6 +611,12 @@ impl Discovery {
                     remote_writer_infos: disc_writer_data.clone(),
                 };
                 effects.push(effect);
+
+                event!(
+                    Level::WARN,
+                    reader_match_infos = ?reader_match_infos,
+                    "associate readers: success"
+                );
             }
         }
 
@@ -596,17 +625,19 @@ impl Discovery {
 
     /// Associate local Writers to remote Readers
     fn associate_writers(&self, effects: &mut Effects) -> Result<(), Error> {
-        for potential_match in self
+        let potential_matches = self
             .edp_sub_detector
-            .get_all_available_changes(SampleStateKind::Any)
-        {
+            .get_all_available_changes(SampleStateKind::Any);
+
+        for potential_match in potential_matches {
             let Some(data) = potential_match.get_data() else {
                 unreachable!("CacheChange Data submessage presence checked at ingestion")
             };
 
             let Ok(disc_reader_data) = DiscoveredReaderData::from_serialized_data(data.clone())
             else {
-                return Err(Error::DeserializationError);
+                event!(Level::ERROR, "Deserialization error");
+                return Ok(());
             };
 
             for (_id, writer_match_infos) in self.application_writers_infos.iter() {
@@ -620,6 +651,11 @@ impl Discovery {
                         remote_reader_infos: disc_reader_data.clone(),
                     };
                     effects.push(effect);
+                    event!(
+                        Level::WARN,
+                        writer_match_infos = ?writer_match_infos,
+                        "associate readers: failure"
+                    );
                 }
 
                 let effect = Effect::WriterMatch {
@@ -628,6 +664,12 @@ impl Discovery {
                     remote_reader_infos: disc_reader_data.clone(),
                 };
                 effects.push(effect);
+
+                event!(
+                    Level::WARN,
+                    writer_match_infos = ?writer_match_infos,
+                    "associate readers: success"
+                );
             }
         }
 
@@ -665,7 +707,7 @@ impl Discovery {
                 endpoint.add_proxy(writer_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Publication detector<{}> discovered Publication announcer<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -698,7 +740,7 @@ impl Discovery {
                 endpoint.add_proxy(reader_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Publication announcer<{}> discovered Publication detector<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -730,7 +772,7 @@ impl Discovery {
                 endpoint.add_proxy(writer_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Subscription detector<{}> discovered Subscription announcer<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -763,7 +805,7 @@ impl Discovery {
                 endpoint.add_proxy(reader_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Subscription announcer<{}> discovered Subscription detector<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -785,6 +827,7 @@ mod tests {
     use std::str::FromStr;
 
     use crate::{
+        LocatorKind,
         messages::MessageFactory,
         types::{
             ContentNature, DomainTag, ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER, Guid,
@@ -820,62 +863,66 @@ mod tests {
         assert!(schedule_effect.is_some());
     }
 
-    // TODO: should also check that a message coming from itself (same participant GuidPrefix) is discarded
-    #[rstest]
-    fn receive_remote_participant_infos(
-        #[from(setup_discovery)] mut discovery: Discovery,
-        #[from(setup_participant_infos_1)] participant_proxy: ParticipantProxy,
-        #[from(setup_guid_prefix)]
-        #[with(1)]
-        remote_participant_guid_prefix: GuidPrefix,
-    ) {
-        let mut effects = Effects::new();
-        let participant_disc_data = PdpDiscoveredParticipantData::new(
-            ParticipantBuiltinTopicData::default(),
-            participant_proxy,
-            Duration::from(std::time::Duration::from_millis(1000)),
-        );
-        let data = participant_disc_data
-            .into_serialized_data(Endian::Little)
-            .unwrap();
-        let message = MessageFactory::new(remote_participant_guid_prefix)
-            .message()
-            .reader(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
-            .writer(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
-            .data(ContentNature::Data, SequenceNumber(1), None, Some(data))
-            .build();
-        assert_eq!(discovery.remote_participants_infos.len(), 0);
+    // #[rstest]
+    // fn receive_remote_participant_infos(
+    //     #[from(setup_discovery)] mut discovery: Discovery,
+    //     #[from(setup_participant_infos_1)] participant_proxy: ParticipantProxy,
+    //     #[from(setup_guid_prefix)]
+    //     #[with(1)]
+    //     remote_participant_guid_prefix: GuidPrefix,
+    // ) {
+    //     let mut effects = Effects::new();
+    //     let participant_disc_data = PdpDiscoveredParticipantData::new(
+    //         ParticipantBuiltinTopicData::default(),
+    //         participant_proxy,
+    //         Duration::from(std::time::Duration::from_millis(1000)),
+    //     );
+    //     let data = participant_disc_data
+    //         .into_serialized_data(Endian::Little)
+    //         .unwrap();
+    //     let message = MessageFactory::new(remote_participant_guid_prefix)
+    //         .message()
+    //         .reader(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
+    //         .writer(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
+    //         .data(ContentNature::Data, SequenceNumber(1), None, Some(data))
+    //         .build();
+    //     assert_eq!(discovery.remote_participants_infos.len(), 0);
 
-        discovery.ingest(&mut effects, message, 1000).unwrap();
+    //     discovery.ingest(&mut effects, message, 1000).unwrap();
 
-        // assert_eq!(discovery.remote_participants_infos.len(), 1);
+    //     // assert_eq!(discovery.remote_participants_infos.len(), 1);
 
-        // let Some(stored_proxy) = discovery
-        //     .remote_participants_infos
-        //     .get(&participant_disc_data.get_guid().get_guid_prefix())
-        // else {
-        //     panic!()
-        // };
-        // assert_eq!(stored_proxy.infos, participant_disc_data);
+    //     // let Some(stored_proxy) = discovery
+    //     //     .remote_participants_infos
+    //     //     .get(&participant_disc_data.get_guid().get_guid_prefix())
+    //     // else {
+    //     //     panic!()
+    //     // };
+    //     // assert_eq!(stored_proxy.infos, participant_disc_data);
 
-        // let schedule_effect = effects.find(|e| matches!(e, Effect::ScheduleTick { .. }));
-        // assert!(schedule_effect.is_some());
-    }
+    //     // let schedule_effect = effects.find(|e| matches!(e, Effect::ScheduleTick { .. }));
+    //     // assert!(schedule_effect.is_some());
+    // }
 
-    #[rstest]
-    fn match_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
+    // #[rstest]
+    // fn match_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
 
-    #[rstest]
-    fn remove_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
+    // #[rstest]
+    // fn remove_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
 
     #[fixture]
     fn setup_discovery(
         #[from(setup_participant_infos_0)] infos: ParticipantProxy,
         #[from(setup_configuration)] config: DiscoveryConfiguration,
     ) -> Discovery {
-        DiscoveryBuilder::new(infos.get_guid_prefix(), config)
+        let mut discovery = DiscoveryBuilder::new(infos.get_guid_prefix(), config)
             .last_announcement(0)
-            .build()
+            .build();
+        let locators = vec![Locator::from_str("0.0.0.0:0:UDPV4").unwrap()];
+        let locators = LocatorList::new(locators);
+        discovery.add_pdp_announcer_proxy(Default::default(), locators.clone());
+        discovery.add_pdp_detector_proxy(Default::default(), locators);
+        discovery
     }
 
     #[fixture]

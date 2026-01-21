@@ -167,7 +167,7 @@ impl Writer {
         }
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_change(&mut self, effects: &mut Effects, change: CacheChange) -> Result<(), Error> {
         self.cache.push_change(change).unwrap();
         self.produce_data(self.last_change_sequence_number, effects)
@@ -176,7 +176,7 @@ impl Writer {
     /// Process an incomming message if it contains a Acknack or a NackFrag submessage
     ///
     /// Each Acknack will records positive and/or negative acknowledgments and call [`NackedDataSchedulePort::on_nacked_data_schedule`] if one was provided
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn ingest(
         &mut self,
         effects: &mut Effects,
@@ -219,7 +219,7 @@ impl Writer {
                     };
 
                     if count <= proxy.acknack_count {
-                        event!(Level::TRACE, "HEARTBEAT discarded: counter wrong");
+                        event!(Level::TRACE, "ACKNACK discarded: counter wrong");
                         continue;
                     }
                     proxy.acknack_count = count;
@@ -230,10 +230,13 @@ impl Writer {
                     proxy.acked_changes_set(base - 1);
                     proxy.requested_changes_set(set);
 
-                    let effect = Effect::ScheduleTick {
-                        delay: self.config.nack_response_delay_ms,
-                    };
+                    // let effect = Effect::ScheduleTick {
+                    //     delay: self.config.nack_response_delay_ms,
+                    // };
+                    let effect = Effect::ScheduleTick { delay: 2000 };
                     effects.push(effect);
+
+                    event!(Level::TRACE, "ACKNACK processed");
                 }
                 SubmessageContent::NackFrag {
                     reader_id,
@@ -274,10 +277,8 @@ impl Writer {
         Ok(())
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn tick(&mut self, effects: &mut Effects, now: i64) {
-        event!(Level::WARN, "Writer ticked");
-
         if matches!(self.is_reliable, ReliabilityKind::BestEffort) {
             event!(Level::TRACE, "BestEffort Writer doesn't send HEARTBEAT");
             return;
@@ -323,9 +324,9 @@ impl Writer {
                 };
                 effects.push(effect);
 
-                event!(Level::TRACE, "HEARTBEAT message produced");
+                event!(Level::DEBUG, "HEARTBEAT produced");
             } else {
-                event!(Level::TRACE, "No unacked changes");
+                event!(Level::DEBUG, "No unacked changes");
             }
 
             // NACKED production
@@ -365,35 +366,35 @@ impl Writer {
                 };
                 effects.push(effect);
 
-                event!(Level::TRACE, "NACK message produced");
+                event!(Level::DEBUG, "NACK produced");
             } else {
-                event!(Level::TRACE, "No requested changes");
+                event!(Level::DEBUG, "No requested changes");
             }
         }
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_proxy(&mut self, proxy: ReaderProxy) {
         self.matched_readers
             .insert(proxy.get_remote_reader_guid(), proxy);
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn remove_proxy(&mut self, proxy_guid: Guid) {
         self.matched_readers.remove(&proxy_guid);
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn lookup_proxy(&mut self, proxy_guid: Guid) -> bool {
         self.matched_readers.contains_key(&proxy_guid)
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_unicast_locators(&mut self, mut locators: LocatorList) {
         self.unicast_locator_list.append(&mut locators);
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn add_multicast_locators(&mut self, mut locators: LocatorList) {
         self.multicast_locator_list.append(&mut locators);
     }
@@ -403,7 +404,6 @@ impl Writer {
         sequence: SequenceNumber,
         effects: &mut Effects,
     ) -> Result<(), Error> {
-        event!(Level::TRACE, "produce data");
         if self.matched_readers.is_empty() {
             return Ok(());
         }
@@ -458,6 +458,8 @@ impl Writer {
         self.matched_readers
             .values_mut()
             .for_each(|p| p.set_highest_sent_change_sn(sequence));
+
+        event!(Level::DEBUG, "DATA produced");
 
         Ok(())
     }

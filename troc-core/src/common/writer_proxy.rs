@@ -58,8 +58,8 @@ impl WriterProxy {
             changes_from_writer_map: Default::default(),
             missing_frags: Default::default(),
             last_heartbeat_timestamp_ms: Utc::now().timestamp_millis(),
-            acknack_counter: Counter::default(),
-            nackfrag_counter: Counter::default(),
+            acknack_counter: Counter::new(),
+            nackfrag_counter: Counter::new(),
         }
     }
 

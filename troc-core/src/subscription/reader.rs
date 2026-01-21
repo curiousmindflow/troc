@@ -129,13 +129,13 @@ impl Reader {
         self.guid
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn get_first_available_change(&self) -> Option<&CacheChangeContainer> {
         let mut available_changes = self.iter_all_available_changes(SampleStateKind::NotRead);
         available_changes.next()
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn take_first_available_change(&mut self) -> Option<CacheChangeContainer> {
         let (guid, sequence) = self
             .iter_all_available_changes(SampleStateKind::NotRead)
@@ -150,7 +150,7 @@ impl Reader {
         self.cache.take_change(guid, sequence)
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn get_all_available_changes(
         &self,
         sample_state: SampleStateKind,
@@ -158,7 +158,7 @@ impl Reader {
         self.iter_all_available_changes(sample_state).collect()
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn take_all_available_changes(&mut self) -> Vec<CacheChangeContainer> {
         let available_changes = self
             .iter_all_available_changes(SampleStateKind::NotRead)
@@ -179,7 +179,7 @@ impl Reader {
         changes
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn ingest(
         &mut self,
         effects: &mut Effects,
@@ -212,7 +212,6 @@ impl Reader {
                     inline_qos,
                     serialized_data,
                 } => {
-                    event!(Level::TRACE, "Receive a Data submessage");
                     if !self.is_the_destination(reader_id) {
                         event!(Level::TRACE, "submessage is not for me");
                         continue;
@@ -242,7 +241,6 @@ impl Reader {
                     gap_group_info,
                     filtered_count,
                 } => {
-                    event!(Level::TRACE, "Receive a Gap submessage");
                     if !self.is_the_destination(reader_id) {
                         event!(Level::TRACE, "submessage is not for me");
                         continue;
@@ -271,7 +269,6 @@ impl Reader {
                     count,
                     heartbeat_group_info,
                 } => {
-                    event!(Level::TRACE, "Receive a Heartbeat submessage");
                     if !self.is_the_destination(reader_id) {
                         event!(Level::TRACE, "submessage is not for me");
                         continue;
@@ -308,7 +305,6 @@ impl Reader {
                     inline_qos,
                     serialized_payload,
                 } => {
-                    event!(Level::TRACE, "Receive a Datafrag submessage");
                     if !self.is_the_destination(reader_id) {
                         event!(Level::TRACE, "submessage is not for me");
                         continue;
@@ -334,7 +330,6 @@ impl Reader {
                     last_fragmentation_num,
                     count,
                 } => {
-                    event!(Level::TRACE, "Receive a Heartbeatfrag submessage");
                     if !self.is_the_destination(reader_id) {
                         event!(Level::TRACE, "submessage is not for me");
                         continue;
@@ -415,7 +410,7 @@ impl Reader {
         Ok(())
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn tick(&mut self, effects: &mut Effects, now: i64) {
         // TODO: check time related QoS
 
@@ -479,30 +474,40 @@ impl Reader {
 
             effects.push(effect);
         }
+
+        event!(Level::DEBUG, "Reader ticked");
+
+        // // FIXME: tmp
+        // let changes = self
+        //     .cache
+        //     .get_changes()
+        //     .map(|c| c.get_sequence_number())
+        //     .collect::<Vec<_>>();
+        // event!(Level::WARN, ?changes, "changes in cache");
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn add_proxy(&mut self, proxy: WriterProxy) {
         self.matched_writers
             .insert(proxy.get_remote_writer_guid(), proxy);
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn remove_proxy(&mut self, proxy_guid: Guid) {
         self.matched_writers.remove(&proxy_guid);
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn lookup_proxy(&mut self, proxy_guid: Guid) -> bool {
         self.matched_writers.contains_key(&proxy_guid)
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn add_unicast_locators(&mut self, mut locators: LocatorList) {
         self.unicast_locator_list.append(&mut locators);
     }
 
-    #[instrument(skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
     pub fn add_multicast_locators(&mut self, mut locators: LocatorList) {
         self.multicast_locator_list.append(&mut locators);
     }
@@ -523,9 +528,16 @@ impl Reader {
             .map(|proxy| (proxy.remote_writer_guid, proxy.available_changes_max()))
             .collect();
 
-        self.cache
+        let res = self
+            .cache
             .get_changes()
-            .filter(|container| container.get_sample_state_kind() == sample_state)
+            .filter(|container| {
+                if matches!(sample_state, SampleStateKind::Any) {
+                    true
+                } else {
+                    container.get_sample_state_kind() == sample_state
+                }
+            })
             .filter(|container| {
                 if let Some(max_available_change) =
                     available_changes_max_by_proxy.get(&container.get_guid())
@@ -543,7 +555,9 @@ impl Reader {
                         second.get_reception_timestamp(),
                     ),
                 )
-            })
+            });
+
+        res
     }
 
     fn cleanup(&mut self) {
@@ -566,6 +580,7 @@ impl Reader {
         self_entity_id == entity_id || entity_id == ENTITYID_UNKOWN
     }
 
+    #[instrument(level = Level::DEBUG, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers, writer_guid = %writer_guid, sequence = %change_sequence))]
     fn handle_data(
         &mut self,
         effects: &mut Effects,
@@ -659,7 +674,13 @@ impl Reader {
             effects.push(Effect::DataAvailable);
         }
 
-        event!(Level::TRACE, "DATA processed");
+        let changes = self
+            .cache
+            .get_changes()
+            .map(|c| c.get_sequence_number())
+            .collect::<Vec<_>>();
+
+        event!(Level::WARN, ?changes, "DATA processed");
 
         Ok(())
     }
@@ -693,7 +714,7 @@ impl Reader {
 
             proxy.not_available_change_set(list, ChangeCount::default());
 
-            event!(Level::TRACE, "GAP processed");
+            event!(Level::DEBUG, "GAP processed");
         } else {
             event!(Level::TRACE, "GAP discarded");
         }
@@ -705,6 +726,7 @@ impl Reader {
         gap_start.0 <= 0 || gap_start > &gap_list.get_base()
     }
 
+    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers, writer_guid = %writer_guid, first_sn = %first_sn, last_sn = %last_sn))]
     fn handle_heartbeat(
         &mut self,
         effects: &mut Effects,
@@ -743,10 +765,9 @@ impl Reader {
                 delay: self.config.heartbeat_response_delay_ms,
             };
             effects.push(effect);
-            event!(Level::TRACE, "Tick scheduled");
         }
 
-        event!(Level::TRACE, "HEARTBEAT processed");
+        event!(Level::DEBUG, "HEARTBEAT processed");
 
         Ok(())
     }
@@ -942,6 +963,7 @@ impl Debug for Reader {
 mod tests {
     use crate::{
         messages::MessageFactory,
+        subscription::SampleStateKind,
         types::{
             ContentNature, EntityId, Guid, InlineQos, LocatorList, ReliabilityKind, SequenceNumber,
             SerializedData,
@@ -990,6 +1012,10 @@ mod tests {
         let change = reader.get_first_available_change().unwrap();
 
         assert_eq!(change.get_sequence_number(), SequenceNumber(1));
+
+        let changes = reader.get_all_available_changes(SampleStateKind::Any);
+
+        assert_eq!(changes.len(), 1);
     }
 
     #[fixture]

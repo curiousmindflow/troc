@@ -16,12 +16,12 @@ pub async fn exchange(
     let expected_msg = DummyStruct::new(0, &[]);
 
     bundle
-        .alpha_writer
+        .beta_writer
         .write(expected_msg.clone())
         .await
         .unwrap();
     let sample = bundle
-        .beta_reader
+        .alpha_reader
         .read_next_sample_timeout(Duration::from_secs(timeout_delay_seconds))
         .await?;
     let received_msg = sample.take_data().unwrap();

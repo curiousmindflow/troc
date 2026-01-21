@@ -22,11 +22,11 @@ async fn endpoints_have_matched(
 
     let mut msg = DummyStruct::new(1, &payload);
 
-    bundle.alpha_writer.write(msg.clone()).await.unwrap();
+    bundle.beta_writer.write(msg.clone()).await.unwrap();
 
     msg.id = 0;
     match bundle
-        .beta_reader
+        .alpha_reader
         .read_next_sample_instance_timeout(&msg, Duration::from_secs(5))
         .await
     {
@@ -35,9 +35,9 @@ async fn endpoints_have_matched(
     }
 
     msg.id = 1;
-    bundle.alpha_writer.write(msg.clone()).await.unwrap();
+    bundle.beta_writer.write(msg.clone()).await.unwrap();
     bundle
-        .beta_reader
+        .alpha_reader
         .read_next_sample_instance(&msg)
         .await
         .unwrap();

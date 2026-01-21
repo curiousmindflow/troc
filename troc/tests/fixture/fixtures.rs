@@ -16,10 +16,10 @@ use troc::{
 pub struct TwoParticipantsBundle {
     pub alpha_domain_participant: DomainParticipant,
     pub beta_domain_participant: DomainParticipant,
-    pub alpha_publisher: Publisher,
-    pub beta_subscriber: Subscriber,
-    pub alpha_writer: DataWriter<DummyStruct>,
-    pub beta_reader: DataReader<DummyStruct>,
+    pub beta_publisher: Publisher,
+    pub alpha_subscriber: Subscriber,
+    pub beta_writer: DataWriter<DummyStruct>,
+    pub alpha_reader: DataReader<DummyStruct>,
 }
 
 pub struct ThreeParticipantsBundle {
@@ -121,21 +121,21 @@ pub async fn two_participants(
     let topic =
         alpha_domain_participant.create_topic(topic_name, "DummyStruct", &reader_qos, topic_kind);
 
-    let mut beta_subscriber = alpha_domain_participant
+    let mut alpha_subscriber = alpha_domain_participant
         .create_subscriber(&reader_qos)
         .await
         .unwrap();
-    let mut alpha_publisher = beta_domain_participant
+    let mut beta_publisher = beta_domain_participant
         .create_publisher(&writer_qos)
         .await
         .unwrap();
 
-    let beta_reader = beta_subscriber
+    let alpha_reader = alpha_subscriber
         .create_datareader::<DummyStruct>(&topic, &reader_qos)
         .await
         .unwrap();
 
-    let alpha_writer = alpha_publisher
+    let beta_writer = beta_publisher
         .create_datawriter::<DummyStruct>(&topic, &writer_qos)
         .await
         .unwrap();
@@ -145,10 +145,10 @@ pub async fn two_participants(
     TwoParticipantsBundle {
         alpha_domain_participant,
         beta_domain_participant,
-        alpha_publisher,
-        beta_subscriber,
-        alpha_writer,
-        beta_reader,
+        beta_publisher,
+        alpha_subscriber,
+        beta_writer,
+        alpha_reader,
     }
 }
 

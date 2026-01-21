@@ -5,7 +5,7 @@ use chrono::Utc;
 use kameo::actor::ActorRef;
 use kameo::{Actor, prelude::Message};
 use tokio::sync::broadcast::Sender;
-use tracing::{Level, event, instrument};
+use tracing::{Level, event, instrument, span};
 use troc_core::{
     DdsError, Discovery as ProtocolDiscovery, Effect, Effects, GuidPrefix, Locator, ReaderProxy,
     WriterProxy,
@@ -54,15 +54,11 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
         let now = Utc::now().timestamp_millis();
         match msg {
             DiscoveryActorMessage::ParticipantProxyChanged(participant_proxy) => {
-                // TODO: here, we get the Locators inside participant proxy, we can then ask WireFactory the Locators we don't have yet
-                // since the DiscoveryActor is obviously already created at this point, it's not an issue to pass a clone to the ReceiverWire
-                event!(Level::TRACE, "Participant proxy changed",);
                 self.discovery
                     .update_participant_infos(&mut self.effects, participant_proxy)
                     .unwrap();
             }
             DiscoveryActorMessage::WriterCreated { writer_proxy } => {
-                event!(Level::TRACE, "DataWriter created");
                 self.discovery
                     .add_publications_infos(&mut self.effects, writer_proxy, InlineQos::default())
                     .unwrap();
@@ -71,7 +67,6 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                 self.discovery.remove_publications_infos(entity_id).unwrap();
             }
             DiscoveryActorMessage::ReaderCreated { reader_proxy } => {
-                event!(Level::TRACE, "DataReader created");
                 self.discovery
                     .add_subscriptions_infos(&mut self.effects, reader_proxy, InlineQos::default())
                     .unwrap();
@@ -82,11 +77,9 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     .unwrap();
             }
             DiscoveryActorMessage::Tick => {
-                event!(Level::TRACE, "Discovery ticked");
-                self.discovery.tick(&mut self.effects, now).unwrap()
+                self.discovery.tick(&mut self.effects, now).unwrap();
             }
             DiscoveryActorMessage::IncomingMessage { message } => {
-                event!(Level::TRACE, "Incoming message arrived");
                 let Ok(message) = tokio::task::spawn_blocking(move || {
                     troc_core::Message::deserialize_from(&message)
                 })
@@ -100,7 +93,6 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     .unwrap();
             }
             DiscoveryActorMessage::AddInputWire { wires } => {
-                event!(Level::TRACE, "Input wires received");
                 for wire in wires.values() {
                     wire.tell(ReceiverWireActorMessage::Start {
                         actor_dest: ctx.actor_ref().clone(),
@@ -109,10 +101,11 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     .unwrap();
                 }
                 self.input_wires.extend(wires);
+                event!(Level::DEBUG, "Input wires received");
             }
             DiscoveryActorMessage::AddOutputWires { wires } => {
-                event!(Level::TRACE, "Output wires received");
                 self.output_wires.extend(wires);
+                event!(Level::DEBUG, "Output wires received");
             }
         }
 
@@ -123,7 +116,8 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     message,
                     locators,
                 } => {
-                    event!(Level::TRACE, ?locators, ?self.output_wires, "Processing Effect::Message");
+                    let span = span!(Level::TRACE, "message", ?locators, output_wires = ?self.output_wires);
+                    let _enter = span.enter();
                     let message = tokio::task::spawn_blocking(move || {
                         // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
                         // FIXME: line above lead to crash because of "failed to fill whole buffer", crash happend at serialization, one line below
@@ -146,42 +140,67 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                         }
                     }
 
-                    event!(Level::DEBUG, "All messages sent");
+                    event!(Level::DEBUG, "Effect::Message processed");
                 }
                 Effect::ParticipantMatch { participant_proxy } => {
-                    event!(Level::TRACE, "Processing Effect::ParticipantMatch");
+                    let participant_proxy_str = participant_proxy.to_string();
                     let _res = self
                         .event_sender
                         .send(ParticipantEvent::ParticipantDiscovered { participant_proxy });
+                    event!(
+                        Level::DEBUG,
+                        participant_proxy = participant_proxy_str,
+                        "Effect::ParticipantMatch processed"
+                    );
                 }
                 Effect::ParticipantRemoved { participant_proxy } => {
-                    event!(Level::TRACE, "Processing Effect::ParticipantRemoved");
+                    let participant_proxy_str = participant_proxy.to_string();
                     let _res = self
                         .event_sender
                         .send(ParticipantEvent::ParticipantRemoved { participant_proxy });
+                    event!(
+                        Level::DEBUG,
+                        participant_proxy = participant_proxy_str,
+                        "Effect::ParticipantRemoved processed"
+                    );
                 }
                 Effect::ReaderMatch {
                     success,
                     local_reader_infos,
                     remote_writer_infos,
                 } => {
-                    event!(Level::TRACE, "Processing Effect::ReaderMatch");
+                    let local_reader_infos_str = local_reader_infos.to_string();
+                    let remote_writer_infos_str = remote_writer_infos.to_string();
                     let _res = self.event_sender.send(ParticipantEvent::ReaderDiscovered {
                         reader_data: local_reader_infos,
                     });
+                    event!(
+                        Level::DEBUG,
+                        success = success,
+                        local_reader = local_reader_infos_str,
+                        remote_writer = remote_writer_infos_str,
+                        "Effect::ReaderMatch processed"
+                    );
                 }
                 Effect::WriterMatch {
                     success,
                     local_writer_infos,
                     remote_reader_infos,
                 } => {
-                    event!(Level::TRACE, "Processing Effect::WriterMatch");
+                    let local_writer_infos_str = local_writer_infos.to_string();
+                    let remote_reader_infos_str = remote_reader_infos.to_string();
                     let _res = self.event_sender.send(ParticipantEvent::WriterDiscovered {
                         writer_data: local_writer_infos,
                     });
+                    event!(
+                        Level::DEBUG,
+                        success = success,
+                        local_writer = local_writer_infos_str,
+                        remote_reader = remote_reader_infos_str,
+                        "Effect::WriterMatch processed"
+                    );
                 }
                 Effect::ScheduleTick { delay } => {
-                    event!(Level::TRACE, delay = %delay, "Processing Effect::ScheduleTick");
                     self.timer
                         .tell(TimerActorScheduleTickMessage::Discovery {
                             delay,
@@ -189,6 +208,7 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                         })
                         .await
                         .unwrap();
+                    event!(Level::DEBUG, delay = %delay, "Effect::ScheduleTick processed");
                 }
                 _ => continue,
             }
