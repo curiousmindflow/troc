@@ -123,6 +123,10 @@ impl CacheChangeContainer {
         self.readed
     }
 
+    pub fn mark_read(&mut self) {
+        self.readed = SampleStateKind::Read;
+    }
+
     pub fn into_inner(self) -> CacheChange {
         self.change
     }

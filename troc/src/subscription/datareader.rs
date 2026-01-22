@@ -6,6 +6,7 @@ use std::{
 };
 
 use bytes::BytesMut;
+use chrono::Utc;
 use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Deserialize;
 use tokio::{
@@ -20,35 +21,25 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span, event};
 use troc_core::{
-    CacheChangeContainer, DdsError, Effect, IncommingMessage, OutcommingMessage, Reader,
-    WriterProxy,
+    CacheChangeContainer, DdsError, Effect, IncommingMessage, LocatorList, OutcommingMessage,
+    Reader, WriterProxy,
 };
 use troc_core::{Effects, Keyed};
 use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
 
 use crate::{
     discovery::DiscoveryActor,
-    domain::{DISCOVERY_ACTOR_NAME, TIMER_ACTOR_NAME},
     infrastructure::QosPolicy,
     subscription::{
         DataReaderListener, condition::ReadCondition, data_sample::DataSample,
         sample_info::SampleInfo,
     },
-    time::{TimerActor, TimerActorMessage},
-    wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage},
+    time::{TimerActor, TimerActorScheduleTickMessage},
+    wires::{
+        ReceiverWireActor, ReceiverWireActorMessage, Sendable, SenderWireActor,
+        SenderWireActorMessage,
+    },
 };
-
-#[derive(Debug)]
-pub enum DataReaderProxyCommand {
-    AddProxy {
-        proxy: WriterProxy,
-        emission_infos: Vec<(Locator, Sender<BytesMut>)>,
-    },
-    RemoveProxy {
-        guid: Guid,
-        emission_locators: Vec<Locator>,
-    },
-}
 
 #[derive()]
 pub struct DataReader<T> {
@@ -92,12 +83,19 @@ impl<T> DataReader<T> {
                 .unwrap()
             {
                 Some(change) => {
+                    event!(
+                        Level::WARN,
+                        "read_next_sample_raw available changes received"
+                    );
                     let data = change.data.clone();
                     let infos = SampleInfo::from(&change.infos);
                     let sample = DataSample::<SerializedData>::new(infos, data);
                     return Ok(sample);
                 }
-                None => self.data_availability_notifier.notified().await,
+                None => {
+                    event!(Level::WARN, "read_next_sample_raw no available changes");
+                    self.data_availability_notifier.notified().await
+                }
             }
         }
     }
@@ -222,6 +220,7 @@ impl Message<DataReaderActorReadOneMessage> for DataReaderActor {
     ) -> Self::Reply {
         match msg {
             DataReaderActorReadOneMessage::Read {} => {
+                event!(Level::WARN, "DataReaderActorReadOneMessage::Read processed");
                 let a = self.reader.get_first_available_change();
                 a.cloned()
             }
@@ -243,6 +242,10 @@ pub enum DataReaderActorMessage {
         locators: Vec<Locator>,
     },
     Tick,
+    AddInputWire {
+        wires: Vec<ActorRef<ReceiverWireActor>>,
+        locators: LocatorList,
+    },
 }
 
 impl Message<DataReaderActorMessage> for DataReaderActor {
@@ -253,6 +256,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
         msg: DataReaderActorMessage,
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
+        let now = Utc::now().timestamp_millis();
         match msg {
             DataReaderActorMessage::IncomingMessage { message } => {
                 let message = tokio::task::spawn_blocking(move || {
@@ -260,7 +264,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                 })
                 .await
                 .unwrap();
-                self.reader.ingest(&mut self.effects, message).unwrap()
+                self.reader.ingest(&mut self.effects, now, message).unwrap()
             }
             DataReaderActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
@@ -272,12 +276,27 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                 }
                 self.reader.remove_proxy(guid)
             }
-            DataReaderActorMessage::Tick => self.reader.tick(&mut self.effects),
+            DataReaderActorMessage::Tick => self.reader.tick(&mut self.effects, now),
+            DataReaderActorMessage::AddInputWire { wires, locators } => {
+                for wire in &wires {
+                    wire.tell(ReceiverWireActorMessage::Start {
+                        actor_dest: ctx.actor_ref().clone(),
+                    })
+                    .await
+                    .unwrap();
+                }
+                self.input_wires.extend(wires);
+                self.reader.add_unicast_locators(locators);
+            }
         }
 
         while let Some(effect) = self.effects.pop() {
             match effect {
                 Effect::DataAvailable => {
+                    event!(
+                        Level::WARN,
+                        "Effect::DataAvailable processed: signal to data_availability_notifier"
+                    );
                     self.data_availability_notifier.notify_one();
                 }
                 Effect::Message {
@@ -285,11 +304,12 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                     message,
                     locators,
                 } => {
-                    let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
+                    let message = tokio::task::spawn_blocking(move || {
                         // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
-                        let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        let mut emission_buffer = BytesMut::zeroed(65 * 1024);
                         let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
-                        (nb_bytes, emission_buffer)
+                        emission_buffer.split_to(nb_bytes)
                     })
                     .await
                     .unwrap();
@@ -304,9 +324,9 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                         }
                     }
                 }
-                Effect::ScheduleTick { delay } => {
+                Effect::ScheduleTick { id: _, delay } => {
                     self.timer
-                        .tell(TimerActorMessage::ScheduleReaderTick {
+                        .tell(TimerActorScheduleTickMessage::Reader {
                             delay,
                             target: ctx.actor_ref().clone(),
                         })
@@ -323,13 +343,16 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
 #[derive(Debug)]
 pub struct DataReaderActorCreateObject {
     pub reader: Reader,
-    pub input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    pub qos: InlineQos,
     pub data_availability_notifier: Arc<Notify>,
+    pub discovery: ActorRef<DiscoveryActor>,
+    pub timer: ActorRef<TimerActor>,
 }
 
 #[derive(Debug)]
 pub struct DataReaderActor {
     reader: Reader,
+    qos: InlineQos,
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
@@ -349,24 +372,19 @@ impl Actor for DataReaderActor {
     ) -> Result<Self, Self::Error> {
         let DataReaderActorCreateObject {
             reader,
-            input_wires,
+            qos,
             data_availability_notifier,
+            discovery,
+            timer,
         } = args;
-
-        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
-        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
 
         let datawriter_actor = Self {
             reader,
+            qos,
             effects: Effects::default(),
             discovery,
             timer,
-            input_wires,
+            input_wires: Default::default(),
             output_wires: Default::default(),
             data_availability_notifier,
         };
@@ -388,7 +406,7 @@ impl Sendable for DataReaderActor {
     type Msg = DataReaderActorMessage;
 
     fn build_message(buffer: BytesMut) -> Self::Msg {
-        todo!()
+        DataReaderActorMessage::IncomingMessage { message: buffer }
     }
 }
 

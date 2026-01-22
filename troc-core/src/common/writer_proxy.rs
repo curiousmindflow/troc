@@ -58,8 +58,8 @@ impl WriterProxy {
             changes_from_writer_map: Default::default(),
             missing_frags: Default::default(),
             last_heartbeat_timestamp_ms: Utc::now().timestamp_millis(),
-            acknack_counter: Counter::default(),
-            nackfrag_counter: Counter::default(),
+            acknack_counter: Counter::new(),
+            nackfrag_counter: Counter::new(),
         }
     }
 
@@ -266,7 +266,6 @@ impl WriterProxy {
         self.available_changes_max() + 1
     }
 
-    #[inline(never)]
     fn fill(&mut self, up_to: SequenceNumber) {
         let first_sequence = self
             .changes_from_writer_map
@@ -291,7 +290,6 @@ impl WriterProxy {
         }
     }
 
-    #[inline(never)]
     pub fn clean(&mut self, min_seq_in_cache: &SequenceNumber) {
         fn clean_condition(cfw: &ChangeFromWriter, min_seq_in_cache: &SequenceNumber) -> bool {
             &cfw.change_sequence_number < min_seq_in_cache
@@ -347,8 +345,8 @@ impl Clone for WriterProxy {
             multicast_locator_list: self.multicast_locator_list.clone(),
             missing_frags: Default::default(),
             last_heartbeat_timestamp_ms: Default::default(),
-            acknack_counter: Default::default(),
-            nackfrag_counter: Default::default(),
+            acknack_counter: Counter::new(),
+            nackfrag_counter: Counter::new(),
         }
     }
 }

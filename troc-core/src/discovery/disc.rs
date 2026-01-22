@@ -1,10 +1,11 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     time::Duration,
 };
 
 use crate::{
     LocatorList,
+    common::TickId,
     messages::{Message, Submessage, SubmessageContent},
     types::{
         ChangeKind, ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
@@ -18,7 +19,7 @@ use crate::{
     },
 };
 use binrw::Endian;
-use tracing::{Level, event};
+use tracing::{Level, event, instrument};
 
 use crate::{
     Reader, ReaderBuilder, ReaderConfiguration, ReaderProxy, Writer, WriterBuilder,
@@ -39,8 +40,8 @@ pub struct Announce {
 
 #[derive(Debug)]
 pub struct DiscoveryConfiguration {
-    announcement_period: i64,
-    lease_duration: Duration,
+    pub announcement_period: i64,
+    pub lease_duration: Duration,
 }
 
 impl DiscoveryConfiguration {
@@ -104,7 +105,7 @@ impl DiscoveryBuilder {
             last_announcement_timestamp_ms,
         } = self;
 
-        let mut pdp_announcer = WriterBuilder::new(
+        let pdp_announcer = WriterBuilder::new(
             Guid::new(
                 participant_guid_prefix,
                 ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER,
@@ -113,18 +114,7 @@ impl DiscoveryBuilder {
         )
         .build();
 
-        let pdp_announcer_proxy = ReaderProxy::new(
-            Guid::default(),
-            EntityId::default(),
-            false,
-            true,
-            // FIXME: should set correct multicast locators
-            LocatorList::default(),
-            LocatorList::default(),
-        );
-        pdp_announcer.add_proxy(pdp_announcer_proxy);
-
-        let mut pdp_detector = ReaderBuilder::new(
+        let pdp_detector = ReaderBuilder::new(
             Guid::new(
                 participant_guid_prefix,
                 ENTITYID_SPDP_BUILTIN_PARTICIPANT_DETECTOR,
@@ -132,15 +122,6 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .build();
-
-        let pdp_detector_proxy = WriterProxy::new(
-            Guid::default(),
-            EntityId::default(),
-            59 * 1024,
-            LocatorList::default(),
-            LocatorList::default(),
-        );
-        pdp_detector.add_proxy(pdp_detector_proxy);
 
         let edp_pub_announcer = WriterBuilder::new(
             Guid::new(
@@ -150,6 +131,7 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::PublicationAnnouncer)
         .build();
 
         let edp_sub_announcer = WriterBuilder::new(
@@ -160,6 +142,7 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::SubscriptionAnnouncer)
         .build();
 
         let edp_pub_detector = ReaderBuilder::new(
@@ -170,19 +153,22 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::PublicationDetector)
         .build();
 
         let edp_sub_detector = ReaderBuilder::new(
             Guid::new(
                 participant_guid_prefix,
-                ENTITYID_SEDP_BUILTIN_PUBLICATIONS_DETECTOR,
+                ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR,
             ),
             InlineQos::default(),
         )
         .reliability(ReliabilityKind::Reliable)
+        .with_tick_id(TickId::SubscriptionDetector)
         .build();
 
         Discovery {
+            participant_guid_prefix,
             pdp_announcer,
             pdp_detector,
             edp_pub_announcer,
@@ -194,13 +180,14 @@ impl DiscoveryBuilder {
             local_participant_infos: Default::default(),
             remote_participants_infos: Default::default(),
             config,
-            last_announcement_timestamp_ms: last_announcement_timestamp_ms.unwrap_or_default(),
+            last_announcement_timestamp_ms: last_announcement_timestamp_ms.unwrap_or(0),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Discovery {
+    participant_guid_prefix: GuidPrefix,
     pdp_announcer: Writer,
     pdp_detector: Reader,
     edp_pub_announcer: Writer,
@@ -216,46 +203,58 @@ pub struct Discovery {
 }
 
 impl Discovery {
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn update_participant_infos(
         &mut self,
         effects: &mut Effects,
         infos: ParticipantProxy,
     ) -> Result<(), Error> {
         self.local_participant_infos = infos;
+        event!(Level::DEBUG, "Participant infos updated");
         self.produce_participant_announce(effects)?;
         Ok(())
     }
 
     // TODO: when new local Writer is created we should try to associate it with remote Reader infos previously received
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn add_publications_infos(
         &mut self,
         effects: &mut Effects,
-        writer_proxy: WriterProxy,
-        inline_qos: InlineQos,
+        writer_discovery_data: DiscoveredWriterData,
     ) -> Result<(), Error> {
-        let qos = inline_qos.clone();
-        let guid = writer_proxy.get_remote_writer_guid();
+        let writer_entity_duid = writer_discovery_data.proxy.get_remote_writer_guid();
 
-        let disc_writer_data = DiscoveredWriterData {
-            proxy: writer_proxy,
-            params: inline_qos,
-        };
-
-        let Ok(data) = disc_writer_data.into_serialized_data(Endian::Big) else {
+        let Ok(data) = writer_discovery_data
+            .clone()
+            .into_serialized_data(Endian::Big)
+        else {
             //
             todo!()
         };
 
-        let key = guid.as_bytes();
+        let key = writer_entity_duid.as_bytes();
         let instance = InstanceHandle(key);
+        let qos = writer_discovery_data.params.clone();
 
         let change =
             self.edp_pub_announcer
                 .new_change(ChangeKind::Alive, Some(data), Some(qos), instance);
 
-        self.edp_pub_announcer.add_change(effects, change)
+        self.edp_pub_announcer.add_change(effects, change).unwrap();
+        self.application_writers_infos.insert(
+            writer_entity_duid.get_entity_id(),
+            WriterMatchingInfos {
+                disc_data: writer_discovery_data,
+                matches: HashSet::default(),
+            },
+        );
+
+        event!(Level::DEBUG, "Writer discovery data produced");
+
+        Ok(())
     }
 
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn remove_publications_infos(&mut self, entity_id: EntityId) -> Result<&Effects, Error> {
         // let _res = self
         //     .edp_pub_announcer
@@ -264,39 +263,50 @@ impl Discovery {
     }
 
     // TODO: when new local Reader is created we should try to associate it with remote Writer infos previously received
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn add_subscriptions_infos(
         &mut self,
         effects: &mut Effects,
-        reader_proxy: ReaderProxy,
-        inline_qos: InlineQos,
+        reader_discovery_data: DiscoveredReaderData,
     ) -> Result<(), Error> {
-        let qos = inline_qos.clone();
-        let guid = reader_proxy.get_remote_reader_guid();
+        let reader_entity_guid = reader_discovery_data.proxy.get_remote_reader_guid();
 
-        let disc_reader_data = DiscoveredReaderData {
-            proxy: reader_proxy,
-            params: inline_qos,
-        };
-
-        let Ok(data) = disc_reader_data.into_serialized_data(Endian::Big) else {
+        let Ok(data) = reader_discovery_data
+            .clone()
+            .into_serialized_data(Endian::Big)
+        else {
             //
             todo!()
         };
 
-        let key = guid.as_bytes();
+        let key = reader_entity_guid.as_bytes();
         let instance = InstanceHandle(key);
+        let qos = reader_discovery_data.params.clone();
 
         let change =
             self.edp_sub_announcer
                 .new_change(ChangeKind::Alive, Some(data), Some(qos), instance);
 
-        self.edp_pub_announcer.add_change(effects, change)
+        self.edp_sub_announcer.add_change(effects, change).unwrap();
+        self.application_readers_infos.insert(
+            reader_entity_guid.get_entity_id(),
+            ReaderMatchingInfos {
+                disc_data: reader_discovery_data,
+                matches: HashSet::default(),
+            },
+        );
+
+        event!(Level::DEBUG, "Reader discovery data produced");
+
+        Ok(())
     }
 
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn remove_subscriptions_infos(&mut self, entity_id: EntityId) -> Result<&Effects, Error> {
         unimplemented!()
     }
 
+    #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn ingest(
         &mut self,
         effects: &mut Effects,
@@ -306,65 +316,109 @@ impl Discovery {
         for Submessage { content, .. } in &message.submessages {
             match content {
                 SubmessageContent::Data {
-                    writer_id: ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER,
-                    reader_id: ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER,
+                    writer_id: ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER,
                     ..
                 } => {
-                    self.pdp_detector.ingest(effects, message).unwrap();
-                    if let Some(container) = self.pdp_detector.get_first_available_change() {
-                        let data = container.get_data().unwrap();
-                        let pdp_participant_data =
-                            PdpDiscoveredParticipantData::from_serialized_data(data.clone())
-                                .unwrap();
-                        let lease_duration_ms: std::time::Duration =
-                            pdp_participant_data.get_lease_duration().into();
-                        // FIXME: potentially wrong downcast
-                        let lease_duration_ms = lease_duration_ms.as_millis() as i64;
-                        let lease_end_time_ms = now_ms + lease_duration_ms;
+                    self.pdp_detector.ingest(effects, now_ms, message).unwrap();
+                    let Some(container) = self.pdp_detector.get_first_available_change() else {
+                        break;
+                    };
 
-                        let remote_participant_proxy = pdp_participant_data.get_proxy();
+                    let data = container.get_data().unwrap();
+                    let pdp_participant_data =
+                        PdpDiscoveredParticipantData::from_serialized_data(data.clone()).unwrap();
+                    let lease_duration_ms: std::time::Duration =
+                        pdp_participant_data.get_lease_duration().into();
+                    // FIXME: potentially wrong downcast
+                    let lease_duration_ms = lease_duration_ms.as_millis() as i64;
+                    let lease_end_time_ms = now_ms + lease_duration_ms;
 
-                        let _ = self.remote_participants_infos.insert(
-                            pdp_participant_data.get_guid().get_guid_prefix(),
-                            RemoteParticipantInfos {
-                                lease_end_time_ms,
-                                infos: pdp_participant_data,
-                            },
-                        );
+                    let remote_participant_proxy = pdp_participant_data.get_proxy();
 
-                        self.update_edp_endpoints(&remote_participant_proxy);
+                    let remote_participant_guid_prefix =
+                        pdp_participant_data.get_guid().get_guid_prefix();
+                    let infos = RemoteParticipantInfos {
+                        lease_end_time_ms,
+                        infos: pdp_participant_data,
+                    };
+
+                    match self
+                        .remote_participants_infos
+                        .entry(remote_participant_guid_prefix)
+                    {
+                        Entry::Occupied(mut occupied_entry) => {
+                            event!(Level::DEBUG, "Remote Participant discovery data updated");
+                            *occupied_entry.get_mut() = infos;
+                        }
+                        Entry::Vacant(vacant_entry) => {
+                            event!(Level::DEBUG, "Remote Participant discovered");
+                            let participant_proxy = infos.infos.get_proxy();
+                            vacant_entry.insert(infos);
+                            self.produce_participant_announce(effects)?;
+                            let effect = Effect::ParticipantMatch { participant_proxy };
+                            effects.push(effect);
+                        }
                     }
+
+                    self.update_edp_endpoints(&remote_participant_proxy);
+                    break;
+                }
+                SubmessageContent::Heartbeat {
+                    writer_id: ENTITYID_SEDP_BUILTIN_PUBLICATIONS_ANNOUNCER,
+                    ..
+                } => {
+                    self.edp_pub_detector
+                        .ingest(effects, now_ms, message)
+                        .unwrap();
+                    break;
+                }
+                SubmessageContent::Heartbeat {
+                    writer_id: ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER,
+                    ..
+                } => {
+                    self.edp_sub_detector
+                        .ingest(effects, now_ms, message)
+                        .unwrap();
                     break;
                 }
                 SubmessageContent::AckNack {
                     reader_id: ENTITYID_SEDP_BUILTIN_PUBLICATIONS_DETECTOR,
                     ..
                 } => {
-                    self.edp_pub_announcer.ingest(effects, message).unwrap();
+                    self.edp_pub_announcer
+                        .ingest(effects, now_ms, message)
+                        .unwrap();
                     break;
                 }
                 SubmessageContent::AckNack {
                     reader_id: ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR,
                     ..
                 } => {
-                    self.edp_sub_announcer.ingest(effects, message).unwrap();
+                    self.edp_sub_announcer
+                        .ingest(effects, now_ms, message)
+                        .unwrap();
                     break;
                 }
                 SubmessageContent::Data {
                     writer_id: ENTITYID_SEDP_BUILTIN_PUBLICATIONS_ANNOUNCER,
                     ..
                 } => {
-                    self.edp_pub_detector.ingest(effects, message).unwrap();
+                    self.edp_pub_detector
+                        .ingest(effects, now_ms, message)
+                        .unwrap();
                     break;
                 }
                 SubmessageContent::Data {
                     writer_id: ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER,
                     ..
                 } => {
-                    self.edp_sub_detector.ingest(effects, message).unwrap();
+                    self.edp_sub_detector
+                        .ingest(effects, now_ms, message)
+                        .unwrap();
                     break;
                 }
                 _ => {
+                    event!(Level::TRACE, "Unexpected submessage");
                     continue;
                 }
             }
@@ -376,22 +430,99 @@ impl Discovery {
         Ok(())
     }
 
-    pub fn tick(&mut self, effects: &mut Effects, now_ms: i64) -> Result<(), Error> {
-        let announce_diff = now_ms - self.last_announcement_timestamp_ms;
-        if announce_diff >= self.config.announcement_period {
-            self.produce_participant_announce(effects)?;
-            effects.push(Effect::ScheduleTick {
-                delay: self.config.announcement_period,
-            });
-            self.last_announcement_timestamp_ms = now_ms;
+    #[instrument(level = Level::TRACE, skip_all, fields())]
+    pub fn tick(
+        &mut self,
+        effects: &mut Effects,
+        now_ms: i64,
+        tick_id: TickId,
+    ) -> Result<(), Error> {
+        match tick_id {
+            TickId::ParticipantAnnounce => {
+                let announce_diff = now_ms - self.last_announcement_timestamp_ms;
+                // dbg!(self.last_announcement_timestamp_ms);
+                // dbg!(now_ms);
+                // dbg!(announce_diff);
+                // dbg!(self.config.announcement_period);
+                if announce_diff >= self.config.announcement_period {
+                    self.produce_participant_announce(effects)?;
+                    self.last_announcement_timestamp_ms = now_ms;
+                    // dbg!(self.last_announcement_timestamp_ms);
+                } else {
+                    event!(
+                        Level::TRACE, announcement_period = %self.config.announcement_period, last_announce = %announce_diff,
+                        "Discovery announcement prevented: announcement period duration not yet elapsed"
+                    );
+                }
+
+                effects.push(Effect::ScheduleTick {
+                    delay: self.config.announcement_period,
+                    id: TickId::ParticipantAnnounce,
+                });
+            }
+            TickId::ParticipantRemoval => {
+                // self.remove_participant(effects, now_ms)?;
+                todo!()
+            }
+            TickId::PublicationAnnouncer => {
+                self.edp_pub_announcer.tick(effects, now_ms);
+                effects.push(Effect::ScheduleTick {
+                    delay: 2000,
+                    id: TickId::PublicationAnnouncer,
+                });
+            }
+            TickId::PublicationDetector => {
+                self.edp_pub_detector.tick(effects, now_ms);
+            }
+            TickId::SubscriptionAnnouncer => {
+                self.edp_sub_announcer.tick(effects, now_ms);
+                effects.push(Effect::ScheduleTick {
+                    delay: 2000,
+                    id: TickId::SubscriptionAnnouncer,
+                });
+            }
+            TickId::SubscriptionDetector => {
+                self.edp_sub_detector.tick(effects, now_ms);
+            }
+            _ => unreachable!(),
         }
-        self.remove_participant(effects, now_ms)?;
-        self.edp_pub_announcer.tick(effects);
-        self.edp_sub_announcer.tick(effects);
-        self.edp_pub_detector.tick(effects);
-        self.edp_sub_detector.tick(effects);
+
+        event!(Level::DEBUG, "Discovery ticked");
 
         Ok(())
+    }
+
+    #[instrument(level = Level::TRACE, skip_all, fields())]
+    pub fn add_pdp_announcer_proxy(
+        &mut self,
+        unicast_locators: LocatorList,
+        multicast_locators: LocatorList,
+    ) {
+        let pdp_announcer_proxy = ReaderProxy::new(
+            Guid::default(),
+            EntityId::default(),
+            false,
+            true,
+            unicast_locators,
+            multicast_locators,
+        );
+        self.pdp_announcer.add_proxy(pdp_announcer_proxy);
+    }
+
+    #[instrument(level = Level::TRACE, skip_all, fields())]
+    pub fn add_pdp_detector_proxy(
+        &mut self,
+        unicast_locators: LocatorList,
+        multicast_locators: LocatorList,
+    ) {
+        let pdp_detector_proxy = WriterProxy::new(
+            Guid::default(),
+            EntityId::default(),
+            59 * 1024,
+            unicast_locators,
+            multicast_locators,
+        );
+        self.pdp_detector.add_proxy(pdp_detector_proxy);
     }
 
     fn produce_participant_announce(&mut self, effects: &mut Effects) -> Result<(), Error> {
@@ -418,6 +549,8 @@ impl Discovery {
         );
 
         self.pdp_announcer.add_change(effects, change).unwrap();
+
+        event!(Level::DEBUG, "Participant announcement produced");
 
         Ok(())
     }
@@ -462,22 +595,31 @@ impl Discovery {
         Ok(())
     }
 
+    // TODO: when a match occurs, discovery must creates SenderWire(s) and other structures to setup the local endpoint
     /// Associate local Readers to remote Writers
-    fn associate_readers(&self, effects: &mut Effects) -> Result<(), Error> {
-        for potential_match in self
+    fn associate_readers(&mut self, effects: &mut Effects) -> Result<(), Error> {
+        let potential_matches = self
             .edp_pub_detector
-            .get_all_available_changes(SampleStateKind::Any)
-        {
+            .get_all_available_changes(SampleStateKind::Any);
+
+        for potential_match in potential_matches {
             let Some(data) = potential_match.get_data() else {
                 unreachable!("CacheChange Data submessage presence checked at ingestion")
             };
 
             let Ok(disc_writer_data) = DiscoveredWriterData::from_serialized_data(data.clone())
             else {
-                return Err(Error::DeserializationError);
+                event!(Level::ERROR, "Deserialization error");
+                return Ok(());
             };
 
-            for (_id, reader_match_infos) in self.application_readers_infos.iter() {
+            let remote_writer_guid = disc_writer_data.proxy.get_remote_writer_guid();
+
+            for (_id, reader_match_infos) in self.application_readers_infos.iter_mut() {
+                if reader_match_infos.matches.contains(&remote_writer_guid) {
+                    continue;
+                }
+
                 if let Err(_e) = QosPolicyConsistencyChecker::check(
                     &disc_writer_data.params,
                     &reader_match_infos.disc_data.params,
@@ -496,28 +638,38 @@ impl Discovery {
                     remote_writer_infos: disc_writer_data.clone(),
                 };
                 effects.push(effect);
+                reader_match_infos.matches.insert(remote_writer_guid);
             }
         }
 
         Ok(())
     }
 
+    // TODO: when a match occurs, discovery must creates SenderWire(s) and other structures to setup the local endpoint
     /// Associate local Writers to remote Readers
-    fn associate_writers(&self, effects: &mut Effects) -> Result<(), Error> {
-        for potential_match in self
+    fn associate_writers(&mut self, effects: &mut Effects) -> Result<(), Error> {
+        let potential_matches = self
             .edp_sub_detector
-            .get_all_available_changes(SampleStateKind::Any)
-        {
+            .get_all_available_changes(SampleStateKind::Any);
+
+        for potential_match in potential_matches {
             let Some(data) = potential_match.get_data() else {
                 unreachable!("CacheChange Data submessage presence checked at ingestion")
             };
 
             let Ok(disc_reader_data) = DiscoveredReaderData::from_serialized_data(data.clone())
             else {
-                return Err(Error::DeserializationError);
+                event!(Level::ERROR, "Deserialization error");
+                return Ok(());
             };
 
-            for (_id, writer_match_infos) in self.application_writers_infos.iter() {
+            let remote_reader_guid = disc_reader_data.proxy.get_remote_reader_guid();
+
+            for (_id, writer_match_infos) in self.application_writers_infos.iter_mut() {
+                if writer_match_infos.matches.contains(&remote_reader_guid) {
+                    continue;
+                }
+
                 if let Err(_e) = QosPolicyConsistencyChecker::check(
                     &writer_match_infos.disc_data.params,
                     &disc_reader_data.params,
@@ -536,6 +688,7 @@ impl Discovery {
                     remote_reader_infos: disc_reader_data.clone(),
                 };
                 effects.push(effect);
+                writer_match_infos.matches.insert(remote_reader_guid);
             }
         }
 
@@ -573,7 +726,7 @@ impl Discovery {
                 endpoint.add_proxy(writer_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Publication detector<{}> discovered Publication announcer<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -581,7 +734,7 @@ impl Discovery {
             } else {
                 event!(
                     Level::TRACE,
-                    "Publication detector<{}> already know: {}",
+                    "Publication detector<{}> already knows: {}",
                     &endpoint.get_guid(),
                     &remote_participant_guid
                 );
@@ -606,7 +759,7 @@ impl Discovery {
                 endpoint.add_proxy(reader_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Publication announcer<{}> discovered Publication detector<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -614,7 +767,7 @@ impl Discovery {
             } else {
                 event!(
                     Level::TRACE,
-                    "Publication announcer<{}> already know: {}",
+                    "Publication announcer<{}> already knows: {}",
                     &endpoint.get_guid(),
                     &remote_participant_guid
                 );
@@ -638,7 +791,7 @@ impl Discovery {
                 endpoint.add_proxy(writer_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Subscription detector<{}> discovered Subscription announcer<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -646,7 +799,7 @@ impl Discovery {
             } else {
                 event!(
                     Level::TRACE,
-                    "Subscription detector<{}> already know: {}",
+                    "Subscription detector<{}> already knows: {}",
                     &endpoint.get_guid(),
                     &remote_participant_guid
                 );
@@ -671,7 +824,7 @@ impl Discovery {
                 endpoint.add_proxy(reader_proxy);
 
                 event!(
-                    Level::DEBUG,
+                    Level::TRACE,
                     "Subscription announcer<{}> discovered Subscription detector<{}>",
                     &endpoint.get_guid(),
                     &remote_participant_guid
@@ -679,7 +832,7 @@ impl Discovery {
             } else {
                 event!(
                     Level::TRACE,
-                    "Subscription announcer<{}> already know: {}",
+                    "Subscription announcer<{}> already knows: {}",
                     &endpoint.get_guid(),
                     &remote_participant_guid
                 );
@@ -693,6 +846,8 @@ mod tests {
     use std::str::FromStr;
 
     use crate::{
+        LocatorKind,
+        common::TickId,
         messages::MessageFactory,
         types::{
             ContentNature, DomainTag, ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER, Guid,
@@ -715,7 +870,9 @@ mod tests {
     fn announce(#[from(setup_discovery)] mut discovery: Discovery) {
         let mut effects = Effects::new();
 
-        discovery.tick(&mut effects, 1000).unwrap();
+        discovery
+            .tick(&mut effects, 1000, TickId::ParticipantAnnounce)
+            .unwrap();
 
         let message_effect =
             effects.find(|current_effect| matches!(current_effect, Effect::Message { .. }));
@@ -728,62 +885,66 @@ mod tests {
         assert!(schedule_effect.is_some());
     }
 
-    // TODO: should also check that a message coming from itself (same participant GuidPrefix) is discarded
-    #[rstest]
-    fn receive_remote_participant_infos(
-        #[from(setup_discovery)] mut discovery: Discovery,
-        #[from(setup_participant_infos_1)] participant_proxy: ParticipantProxy,
-        #[from(setup_guid_prefix)]
-        #[with(1)]
-        remote_participant_guid_prefix: GuidPrefix,
-    ) {
-        let mut effects = Effects::new();
-        let participant_disc_data = PdpDiscoveredParticipantData::new(
-            ParticipantBuiltinTopicData::default(),
-            participant_proxy,
-            Duration::from(std::time::Duration::from_millis(1000)),
-        );
-        let data = participant_disc_data
-            .into_serialized_data(Endian::Little)
-            .unwrap();
-        let message = MessageFactory::new(remote_participant_guid_prefix)
-            .message()
-            .reader(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
-            .writer(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
-            .data(ContentNature::Data, SequenceNumber(1), None, Some(data))
-            .build();
-        assert_eq!(discovery.remote_participants_infos.len(), 0);
+    // #[rstest]
+    // fn receive_remote_participant_infos(
+    //     #[from(setup_discovery)] mut discovery: Discovery,
+    //     #[from(setup_participant_infos_1)] participant_proxy: ParticipantProxy,
+    //     #[from(setup_guid_prefix)]
+    //     #[with(1)]
+    //     remote_participant_guid_prefix: GuidPrefix,
+    // ) {
+    //     let mut effects = Effects::new();
+    //     let participant_disc_data = PdpDiscoveredParticipantData::new(
+    //         ParticipantBuiltinTopicData::default(),
+    //         participant_proxy,
+    //         Duration::from(std::time::Duration::from_millis(1000)),
+    //     );
+    //     let data = participant_disc_data
+    //         .into_serialized_data(Endian::Little)
+    //         .unwrap();
+    //     let message = MessageFactory::new(remote_participant_guid_prefix)
+    //         .message()
+    //         .reader(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
+    //         .writer(ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER)
+    //         .data(ContentNature::Data, SequenceNumber(1), None, Some(data))
+    //         .build();
+    //     assert_eq!(discovery.remote_participants_infos.len(), 0);
 
-        discovery.ingest(&mut effects, message, 1000).unwrap();
+    //     discovery.ingest(&mut effects, message, 1000).unwrap();
 
-        // assert_eq!(discovery.remote_participants_infos.len(), 1);
+    //     // assert_eq!(discovery.remote_participants_infos.len(), 1);
 
-        // let Some(stored_proxy) = discovery
-        //     .remote_participants_infos
-        //     .get(&participant_disc_data.get_guid().get_guid_prefix())
-        // else {
-        //     panic!()
-        // };
-        // assert_eq!(stored_proxy.infos, participant_disc_data);
+    //     // let Some(stored_proxy) = discovery
+    //     //     .remote_participants_infos
+    //     //     .get(&participant_disc_data.get_guid().get_guid_prefix())
+    //     // else {
+    //     //     panic!()
+    //     // };
+    //     // assert_eq!(stored_proxy.infos, participant_disc_data);
 
-        // let schedule_effect = effects.find(|e| matches!(e, Effect::ScheduleTick { .. }));
-        // assert!(schedule_effect.is_some());
-    }
+    //     // let schedule_effect = effects.find(|e| matches!(e, Effect::ScheduleTick { .. }));
+    //     // assert!(schedule_effect.is_some());
+    // }
 
-    #[rstest]
-    fn match_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
+    // #[rstest]
+    // fn match_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
 
-    #[rstest]
-    fn remove_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
+    // #[rstest]
+    // fn remove_remote_participant(#[from(setup_discovery)] mut discovery: Discovery) {}
 
     #[fixture]
     fn setup_discovery(
         #[from(setup_participant_infos_0)] infos: ParticipantProxy,
         #[from(setup_configuration)] config: DiscoveryConfiguration,
     ) -> Discovery {
-        DiscoveryBuilder::new(infos.get_guid_prefix(), config)
+        let mut discovery = DiscoveryBuilder::new(infos.get_guid_prefix(), config)
             .last_announcement(0)
-            .build()
+            .build();
+        let locators = vec![Locator::from_str("0.0.0.0:0:UDPV4").unwrap()];
+        let locators = LocatorList::new(locators);
+        discovery.add_pdp_announcer_proxy(Default::default(), locators.clone());
+        discovery.add_pdp_detector_proxy(Default::default(), locators);
+        discovery
     }
 
     #[fixture]

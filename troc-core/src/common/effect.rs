@@ -2,6 +2,20 @@ use crate::{ParticipantProxy, messages::Message, types::LocatorList};
 
 use crate::discovery::{DiscoveredReaderData, DiscoveredWriterData};
 
+#[derive(Debug, Default, Clone, Copy)]
+pub enum TickId {
+    ParticipantAnnounce,
+    ParticipantRemoval,
+    PublicationAnnouncer,
+    PublicationDetector,
+    SubscriptionAnnouncer,
+    SubscriptionDetector,
+    Reader,
+    Writer,
+    #[default]
+    Uknown,
+}
+
 #[derive(Debug)]
 pub enum EffectConsumption {
     Consume,
@@ -76,6 +90,7 @@ pub enum Effect {
         remote_reader_infos: DiscoveredReaderData,
     },
     ScheduleTick {
+        id: TickId,
         delay: i64,
     },
 }

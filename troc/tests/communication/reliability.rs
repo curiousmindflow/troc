@@ -41,13 +41,13 @@ async fn endpoints_have_matched(
 
     let expected_msg = DummyStruct::new(0, &payload);
 
-    let mut writer_listener = bundle.alpha_writer.get_listener().await.unwrap();
+    let mut writer_listener = bundle.beta_writer.get_listener().await.unwrap();
     writer_listener
         .wait_subscription_matched(DurationKind::Infinite)
         .await
         .unwrap();
 
-    let mut reader_listener = bundle.beta_reader.get_listener().await.unwrap();
+    let mut reader_listener = bundle.alpha_reader.get_listener().await.unwrap();
     reader_listener
         .wait_publication_matched(DurationKind::Infinite)
         .await
@@ -55,11 +55,11 @@ async fn endpoints_have_matched(
 
     for _ in 0..exchange_count {
         bundle
-            .alpha_writer
+            .beta_writer
             .write(expected_msg.clone())
             .await
             .unwrap();
-        let sample = bundle.beta_reader.read_next_sample().await.unwrap();
+        let sample = bundle.alpha_reader.read_next_sample().await.unwrap();
         let actual_msg = sample.take_data().unwrap();
         assert_eq!(actual_msg, expected_msg)
     }

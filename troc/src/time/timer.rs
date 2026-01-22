@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use kameo::{Actor, actor::ActorRef, error::Infallible, prelude::Message};
 use tokio::time::sleep;
+use tracing::{Level, event, instrument};
+use troc_core::TickId;
 
 use crate::{
     discovery::{DiscoveryActor, DiscoveryActorMessage},
@@ -10,46 +12,85 @@ use crate::{
 };
 
 #[derive()]
-pub enum TimerActorMessage {
-    ScheduleWriterTick {
+pub enum TimerActorScheduleTickMessage {
+    Writer {
         delay: i64,
         target: ActorRef<DataWriterActor>,
     },
-    ScheduleReaderTick {
+    Reader {
         delay: i64,
         target: ActorRef<DataReaderActor>,
     },
-    ScheduleDiscoveryTick {
+    Discovery {
         delay: i64,
         target: ActorRef<DiscoveryActor>,
+        id: TickId,
     },
 }
 
-impl Message<TimerActorMessage> for TimerActor {
+impl Message<TimerActorScheduleTickMessage> for TimerActor {
     type Reply = ();
 
+    #[instrument(name = "timer", skip_all, fields())]
     async fn handle(
         &mut self,
-        msg: TimerActorMessage,
-        ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+        msg: TimerActorScheduleTickMessage,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         match msg {
-            TimerActorMessage::ScheduleWriterTick { delay, target } => {
+            TimerActorScheduleTickMessage::Writer { delay, target } => {
                 tokio::spawn(async move {
-                    sleep(Duration::from_millis(delay as u64));
+                    event!(
+                        Level::TRACE,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Writer received"
+                    );
+                    sleep(Duration::from_millis(delay as u64)).await;
+                    event!(
+                        Level::TRACE,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Writer delay reached"
+                    );
                     target.tell(DataWriterActorMessage::Tick).await.unwrap()
                 });
             }
-            TimerActorMessage::ScheduleReaderTick { delay, target } => {
+            TimerActorScheduleTickMessage::Reader { delay, target } => {
                 tokio::spawn(async move {
-                    sleep(Duration::from_millis(delay as u64));
+                    event!(
+                        Level::TRACE,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Reader received"
+                    );
+                    sleep(Duration::from_millis(delay as u64)).await;
+                    event!(
+                        Level::TRACE,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Reader delay reached"
+                    );
                     target.tell(DataReaderActorMessage::Tick).await.unwrap()
                 });
             }
-            TimerActorMessage::ScheduleDiscoveryTick { delay, target } => {
+            TimerActorScheduleTickMessage::Discovery { delay, target, id } => {
                 tokio::spawn(async move {
-                    sleep(Duration::from_millis(delay as u64));
-                    target.tell(DiscoveryActorMessage::Tick).await.unwrap()
+                    event!(
+                        Level::TRACE,
+                        %delay,
+                        ?target,
+                        ?id,
+                        "TimerActorScheduleTickMessage::Discovery received"
+                    );
+                    sleep(Duration::from_millis(delay as u64)).await;
+                    event!(
+                        Level::TRACE,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Discovery delay reached"
+                    );
+                    target.tell(DiscoveryActorMessage::Tick(id)).await.unwrap()
                 });
             }
         }
@@ -66,14 +107,14 @@ impl Actor for TimerActor {
 
     async fn on_start(
         args: Self::Args,
-        actor_ref: kameo::prelude::ActorRef<Self>,
+        _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        todo!()
+        Ok(args)
     }
 }
 
 impl TimerActor {
     pub fn new() -> Self {
-        todo!()
+        Self {}
     }
 }

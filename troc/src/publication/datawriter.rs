@@ -2,19 +2,23 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use crate::{
     discovery::DiscoveryActor,
-    domain::{DISCOVERY_ACTOR_NAME, TIMER_ACTOR_NAME},
     infrastructure::QosPolicy,
     publication::DataWriterListener,
-    time::{TimerActor, TimerActorMessage},
-    wires::{ReceiverWireActor, Sendable, SenderWireActor, SenderWireActorMessage},
+    time::{TimerActor, TimerActorScheduleTickMessage},
+    wires::{
+        ReceiverWireActor, ReceiverWireActorMessage, Sendable, SenderWireActor,
+        SenderWireActorMessage,
+    },
 };
 use bytes::BytesMut;
+use chrono::Utc;
 use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Serialize;
 
-use tracing::{Level, event};
+use tracing::{Level, event, instrument};
 use troc_core::{
-    ChangeKind, Guid, InlineQos, InstanceHandle, Locator, SequenceNumber, SerializedData, cdr,
+    ChangeKind, Guid, InlineQos, InstanceHandle, Locator, LocatorList, SequenceNumber,
+    SerializedData, cdr,
 };
 use troc_core::{
     DdsError, Effect, ReaderProxy, Writer,
@@ -52,21 +56,22 @@ impl<T> DataWriter<T> {
         unimplemented!()
     }
 
-    pub async fn write(&mut self, data: T) -> Result<SequenceNumber, DdsError>
+    pub async fn write(&mut self, data: T) -> Result<(), DdsError>
     where
         T: Serialize + Keyed,
     {
         let key = data.key().unwrap();
         let data = cdr::serialize::<_, _, CdrLe>(&data, Infinite).unwrap();
         let data = SerializedData::from_vec(data);
-        self.write_raw(data, InstanceHandle(key)).await
+        self.write_raw(data, InstanceHandle(key)).await.unwrap();
+        Ok(())
     }
 
     pub async fn write_raw(
         &mut self,
         data: SerializedData,
         key: InstanceHandle,
-    ) -> Result<SequenceNumber, DdsError> {
+    ) -> Result<(), DdsError> {
         self.data_writer_actor
             .tell(DataWriterActorMessage::Write {
                 data,
@@ -74,7 +79,7 @@ impl<T> DataWriter<T> {
             })
             .await
             .unwrap();
-        todo!()
+        Ok(())
     }
 
     // TODO: should not be used
@@ -102,21 +107,30 @@ pub enum DataWriterActorMessage {
         locators: Vec<Locator>,
     },
     Tick,
+    AddInputWire {
+        wires: Vec<ActorRef<ReceiverWireActor>>,
+        locators: LocatorList,
+    },
 }
 
 impl Message<DataWriterActorMessage> for DataWriterActor {
     type Reply = ();
 
+    #[instrument(name = "datawriter", skip_all, fields(guid = %self.writer.get_guid()))]
     async fn handle(
         &mut self,
         msg: DataWriterActorMessage,
         ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
+        let now = Utc::now().timestamp_millis();
         match msg {
             DataWriterActorMessage::Write { data, instance } => {
-                let change = self
-                    .writer
-                    .new_change(ChangeKind::Alive, Some(data), None, instance);
+                let change = self.writer.new_change(
+                    ChangeKind::Alive,
+                    Some(data),
+                    Some(self.qos.clone()),
+                    instance,
+                );
                 self.writer.add_change(&mut self.effects, change).unwrap();
             }
             DataWriterActorMessage::IncomingMessage { message } => {
@@ -125,11 +139,18 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 })
                 .await
                 .unwrap();
-                self.writer.ingest(&mut self.effects, message).unwrap()
+                self.writer.ingest(&mut self.effects, now, message).unwrap()
             }
             DataWriterActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
-                self.writer.add_proxy(proxy)
+                self.writer.add_proxy(proxy);
+                self.timer
+                    .tell(TimerActorScheduleTickMessage::Writer {
+                        delay: 100,
+                        target: ctx.actor_ref().clone(),
+                    })
+                    .await
+                    .unwrap();
             }
             DataWriterActorMessage::RemoveProxy { guid, locators } => {
                 for locator in locators {
@@ -137,7 +158,18 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 }
                 self.writer.remove_proxy(guid)
             }
-            DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects),
+            DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects, now),
+            DataWriterActorMessage::AddInputWire { wires, locators } => {
+                for wire in &wires {
+                    wire.tell(ReceiverWireActorMessage::Start {
+                        actor_dest: ctx.actor_ref().clone(),
+                    })
+                    .await
+                    .unwrap();
+                }
+                self.input_wires.extend(wires);
+                self.writer.add_unicast_locators(locators);
+            }
         }
 
         while let Some(effect) = self.effects.pop() {
@@ -147,11 +179,12 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                     message,
                     locators,
                 } => {
-                    let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
+                    let message = tokio::task::spawn_blocking(move || {
                         // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
-                        let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        let mut emission_buffer = BytesMut::zeroed(65 * 1024);
                         let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
-                        (nb_bytes, emission_buffer)
+                        emission_buffer.split_to(nb_bytes)
                     })
                     .await
                     .unwrap();
@@ -166,10 +199,10 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                         }
                     }
                 }
-                Effect::ScheduleTick { delay } => {
+                Effect::ScheduleTick { id: _, delay } => {
                     self.timer
-                        .tell(TimerActorMessage::ScheduleWriterTick {
-                            delay,
+                        .tell(TimerActorScheduleTickMessage::Writer {
+                            delay: 200,
                             target: ctx.actor_ref().clone(),
                         })
                         .await
@@ -185,12 +218,15 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
 #[derive(Debug)]
 pub struct DataWriterActorCreateObject {
     pub writer: Writer,
-    pub input_wires: Vec<ActorRef<ReceiverWireActor>>,
+    pub qos: InlineQos,
+    pub discovery: ActorRef<DiscoveryActor>,
+    pub timer: ActorRef<TimerActor>,
 }
 
 #[derive(Debug)]
 pub struct DataWriterActor {
     writer: Writer,
+    qos: InlineQos,
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
@@ -209,23 +245,18 @@ impl Actor for DataWriterActor {
     ) -> Result<Self, Self::Error> {
         let DataWriterActorCreateObject {
             writer,
-            input_wires,
+            qos,
+            discovery,
+            timer,
         } = args;
-
-        let discovery = ActorRef::<DiscoveryActor>::lookup(DISCOVERY_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
-
-        let timer = ActorRef::<TimerActor>::lookup(TIMER_ACTOR_NAME)
-            .unwrap()
-            .unwrap();
 
         let datawriter_actor = Self {
             writer,
+            qos,
             effects: Effects::default(),
             discovery,
             timer,
-            input_wires,
+            input_wires: Default::default(),
             output_wires: Default::default(),
         };
 
@@ -246,7 +277,7 @@ impl Sendable for DataWriterActor {
     type Msg = DataWriterActorMessage;
 
     fn build_message(buffer: BytesMut) -> Self::Msg {
-        todo!()
+        DataWriterActorMessage::IncomingMessage { message: buffer }
     }
 }
 

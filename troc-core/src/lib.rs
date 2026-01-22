@@ -9,7 +9,7 @@ mod types;
 pub use cdr;
 pub use common::{
     CacheChange, CacheChangeContainer, CacheChangeInfos, Effect, Effects, IncommingMessage,
-    OutcommingMessage, ReaderProxy, WriterProxy,
+    OutcommingMessage, ReaderProxy, TickId, WriterProxy,
 };
 pub use discovery::{
     Announce, DiscoveredReaderData, DiscoveredWriterData, Discovery, DiscoveryBuilder,

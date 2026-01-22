@@ -8,18 +8,18 @@ use tracing::{Level, event, level_filters::LevelFilter};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use troc::{
     Configuration, DataReader, DataWriter, DeadlineQosPolicy, DomainParticipant,
-    DomainParticipantBuilder, DomainTag, DurabilityQosPolicy, DurationKind, HistoryQosPolicy,
-    LifespanQosPolicy, LivelinessQosPolicy, Publisher, QosPolicy, QosPolicyBuilder,
-    ReliabilityQosPolicy, Subscriber, TopicKind,
+    DomainParticipantBuilder, DomainTag, DurabilityQosPolicy, DurationKind, EntityId, Guid,
+    GuidPrefix, HistoryQosPolicy, LifespanQosPolicy, LivelinessQosPolicy, Publisher, QosPolicy,
+    QosPolicyBuilder, ReliabilityQosPolicy, Subscriber, TopicKind, VendorId,
 };
 
 pub struct TwoParticipantsBundle {
     pub alpha_domain_participant: DomainParticipant,
     pub beta_domain_participant: DomainParticipant,
-    pub alpha_publisher: Publisher,
-    pub beta_subscriber: Subscriber,
-    pub alpha_writer: DataWriter<DummyStruct>,
-    pub beta_reader: DataReader<DummyStruct>,
+    pub beta_publisher: Publisher,
+    pub alpha_subscriber: Subscriber,
+    pub beta_writer: DataWriter<DummyStruct>,
+    pub alpha_reader: DataReader<DummyStruct>,
 }
 
 pub struct ThreeParticipantsBundle {
@@ -44,7 +44,7 @@ pub struct ThreeParticipantsBundle {
 #[once]
 pub fn setup_log() {
     let filter_layer = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
+        .with_default_directive(LevelFilter::TRACE.into())
         .from_env_lossy()
         .add_directive("neli=warn".parse().unwrap());
 
@@ -74,6 +74,17 @@ pub fn get_unique_id() -> String {
 }
 
 #[fixture]
+pub fn get_guid(#[default(0)] offset: u8) -> Guid {
+    Guid::new(
+        GuidPrefix::from(
+            [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, offset],
+            VendorId::default(),
+        ),
+        EntityId::default(),
+    )
+}
+
+#[fixture]
 pub async fn two_participants(
     #[default("")] topic_name: impl AsRef<str>,
     #[default(TopicKind::NoKey)] topic_kind: TopicKind,
@@ -81,6 +92,10 @@ pub async fn two_participants(
     #[default(QosPolicy::default())] writer_qos: QosPolicy,
     #[default(0)] alpha_domain_id: u32,
     #[default(0)] beta_domain_id: u32,
+    #[from(get_guid)] alpha_guid: Guid,
+    #[from(get_guid)]
+    #[with(1)]
+    beta_guid: Guid,
     #[from(get_unique_id)] unique_id: String,
 ) -> TwoParticipantsBundle {
     let mut configuration = Configuration::default();
@@ -89,34 +104,38 @@ pub async fn two_participants(
     configuration.discovery.lease_duration = Duration::from_secs(3);
 
     let mut alpha_domain_participant = DomainParticipantBuilder::new()
+        .with_guid(alpha_guid)
         .with_domain(alpha_domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let mut beta_domain_participant = DomainParticipantBuilder::new()
+        .with_guid(beta_guid)
         .with_domain(beta_domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let topic_name = build_test_topic(topic_name.as_ref());
     let topic =
         alpha_domain_participant.create_topic(topic_name, "DummyStruct", &reader_qos, topic_kind);
 
-    let mut beta_subscriber = alpha_domain_participant
+    let mut alpha_subscriber = alpha_domain_participant
         .create_subscriber(&reader_qos)
         .await
         .unwrap();
-    let mut alpha_publisher = beta_domain_participant
+    let mut beta_publisher = beta_domain_participant
         .create_publisher(&writer_qos)
         .await
         .unwrap();
 
-    let beta_reader = beta_subscriber
+    let alpha_reader = alpha_subscriber
         .create_datareader::<DummyStruct>(&topic, &reader_qos)
         .await
         .unwrap();
 
-    let alpha_writer = alpha_publisher
+    let beta_writer = beta_publisher
         .create_datawriter::<DummyStruct>(&topic, &writer_qos)
         .await
         .unwrap();
@@ -126,10 +145,10 @@ pub async fn two_participants(
     TwoParticipantsBundle {
         alpha_domain_participant,
         beta_domain_participant,
-        alpha_publisher,
-        beta_subscriber,
-        alpha_writer,
-        beta_reader,
+        beta_publisher,
+        alpha_subscriber,
+        beta_writer,
+        alpha_reader,
     }
 }
 
@@ -145,7 +164,8 @@ pub async fn three_participants(
     let mut alpha_domain_participant = DomainParticipantBuilder::new()
         .with_domain(domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let qos = alpha_domain_participant
         .create_qos_builder()
@@ -183,7 +203,8 @@ pub async fn three_participants(
     let mut beta_domain_participant = DomainParticipantBuilder::new()
         .with_domain(domain_id)
         .with_config(configuration.clone())
-        .build();
+        .build()
+        .await;
 
     let mut beta_subscriber = beta_domain_participant
         .create_subscriber(&qos)
@@ -209,7 +230,8 @@ pub async fn three_participants(
     let mut gamma_domain_participant = DomainParticipantBuilder::new()
         .with_domain(domain_id)
         .with_config(configuration)
-        .build();
+        .build()
+        .await;
 
     let mut gamma_subscriber = gamma_domain_participant
         .create_subscriber(&qos)

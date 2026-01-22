@@ -7,6 +7,7 @@ use std::{
 };
 
 use binrw::binrw;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::types::Locator;
@@ -46,9 +47,8 @@ impl Debug for LocatorList {
 
 impl Display for LocatorList {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for elt in self.locators.iter() {
-            f.write_str(&format!("{}", elt))?;
-        }
+        let locators_fmt = self.locators.iter().map(|l| l.to_string()).join(",");
+        f.write_str(&format!("[{locators_fmt}]"))?;
         Ok(())
     }
 }

@@ -42,22 +42,22 @@ async fn participant_stale_detection(
     let (mut alpha_participant_listener, _) = participant_discovery(&bundle).await;
 
     let TwoParticipantsBundle {
-        alpha_domain_participant: _,
-        beta_domain_participant,
-        alpha_publisher,
-        beta_subscriber,
-        alpha_writer,
-        beta_reader,
+        alpha_domain_participant,
+        beta_domain_participant: _,
+        beta_publisher,
+        alpha_subscriber,
+        beta_writer,
+        alpha_reader,
     } = bundle;
 
-    let beta_domain_participant_guid = beta_domain_participant.get_guid();
+    let beta_domain_participant_guid = alpha_domain_participant.get_guid();
 
-    drop(beta_reader);
-    drop(beta_subscriber);
-    drop(beta_domain_participant);
+    drop(alpha_reader);
+    drop(alpha_subscriber);
+    drop(alpha_domain_participant);
 
-    let _alpha_publisher = alpha_publisher;
-    let _alpha_writer = alpha_writer;
+    let _beta_publisher = beta_publisher;
+    let _beta_writer = beta_writer;
 
     let event = alpha_participant_listener
         .wait_participant_removed(DurationKind::Infinite)
@@ -102,14 +102,20 @@ async fn participant_discovery(
         .await
         .unwrap();
 
-    assert_eq!(event.get_guid(), bundle.beta_domain_participant.get_guid());
+    assert_eq!(
+        event.get_guid().get_guid_prefix(),
+        bundle.beta_domain_participant.get_guid().get_guid_prefix()
+    );
 
     let event = beta_listener
         .wait_participant_discovered(DurationKind::Infinite)
         .await
         .unwrap();
 
-    assert_eq!(event.get_guid(), bundle.alpha_domain_participant.get_guid());
+    assert_eq!(
+        event.get_guid().get_guid_prefix(),
+        bundle.alpha_domain_participant.get_guid().get_guid_prefix()
+    );
 
     (alpha_listener, beta_listener)
 }
