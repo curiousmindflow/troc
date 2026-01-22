@@ -7,8 +7,8 @@ use kameo::{Actor, prelude::Message};
 use tokio::sync::broadcast::Sender;
 use tracing::{Level, event, instrument, span};
 use troc_core::{
-    DdsError, Discovery as ProtocolDiscovery, Effect, Effects, GuidPrefix, Locator, ReaderProxy,
-    TickId, WriterProxy,
+    DdsError, DiscoveredReaderData, DiscoveredWriterData, Discovery as ProtocolDiscovery, Effect,
+    Effects, GuidPrefix, Locator, ReaderProxy, TickId, WriterProxy,
 };
 
 use troc_core::{EntityId, InlineQos, ParticipantProxy};
@@ -26,12 +26,12 @@ use crate::wires::{
 pub enum DiscoveryActorMessage {
     ParticipantProxyChanged(ParticipantProxy),
     WriterCreated {
-        writer_proxy: WriterProxy,
+        writer_idscovery_data: DiscoveredWriterData,
         actor: ActorRef<DataWriterActor>,
     },
     WriterRemoved(EntityId),
     ReaderCreated {
-        reader_proxy: ReaderProxy,
+        reader_discovery_data: DiscoveredReaderData,
         actor: ActorRef<DataReaderActor>,
     },
     ReaderRemoved(EntityId),
@@ -64,26 +64,36 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     .unwrap();
             }
             DiscoveryActorMessage::WriterCreated {
-                writer_proxy,
+                writer_idscovery_data,
                 actor,
             } => {
-                self.local_writers
-                    .insert(writer_proxy.get_remote_writer_guid().get_entity_id(), actor);
+                self.local_writers.insert(
+                    writer_idscovery_data
+                        .proxy
+                        .get_remote_writer_guid()
+                        .get_entity_id(),
+                    actor,
+                );
                 self.discovery
-                    .add_publications_infos(&mut self.effects, writer_proxy, InlineQos::default())
+                    .add_publications_infos(&mut self.effects, writer_idscovery_data)
                     .unwrap();
             }
             DiscoveryActorMessage::WriterRemoved(entity_id) => {
                 self.discovery.remove_publications_infos(entity_id).unwrap();
             }
             DiscoveryActorMessage::ReaderCreated {
-                reader_proxy,
+                reader_discovery_data,
                 actor,
             } => {
-                self.local_readers
-                    .insert(reader_proxy.get_remote_reader_guid().get_entity_id(), actor);
+                self.local_readers.insert(
+                    reader_discovery_data
+                        .proxy
+                        .get_remote_reader_guid()
+                        .get_entity_id(),
+                    actor,
+                );
                 self.discovery
-                    .add_subscriptions_infos(&mut self.effects, reader_proxy, InlineQos::default())
+                    .add_subscriptions_infos(&mut self.effects, reader_discovery_data)
                     .unwrap();
             }
             DiscoveryActorMessage::ReaderRemoved(entity_id) => {
@@ -197,7 +207,6 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                         "Effect::ReaderMatch processed"
                     );
                     if success {
-                        // creates wires and send them to the local Reader that matched
                         let local_reader = self
                             .local_readers
                             .get(

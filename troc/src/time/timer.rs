@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use kameo::{Actor, actor::ActorRef, error::Infallible, prelude::Message};
 use tokio::time::sleep;
+use tracing::{Level, event, instrument};
 use troc_core::TickId;
 
 use crate::{
@@ -30,6 +31,7 @@ pub enum TimerActorScheduleTickMessage {
 impl Message<TimerActorScheduleTickMessage> for TimerActor {
     type Reply = ();
 
+    #[instrument(name = "timer", skip_all, fields())]
     async fn handle(
         &mut self,
         msg: TimerActorScheduleTickMessage,
@@ -38,19 +40,56 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
         match msg {
             TimerActorScheduleTickMessage::Writer { delay, target } => {
                 tokio::spawn(async move {
+                    event!(
+                        Level::WARN,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Writer received"
+                    );
                     sleep(Duration::from_millis(delay as u64)).await;
+                    event!(
+                        Level::WARN,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Writer delay reached"
+                    );
                     target.tell(DataWriterActorMessage::Tick).await.unwrap()
                 });
             }
             TimerActorScheduleTickMessage::Reader { delay, target } => {
                 tokio::spawn(async move {
+                    event!(
+                        Level::WARN,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Reader received"
+                    );
                     sleep(Duration::from_millis(delay as u64)).await;
+                    event!(
+                        Level::WARN,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Reader delay reached"
+                    );
                     target.tell(DataReaderActorMessage::Tick).await.unwrap()
                 });
             }
             TimerActorScheduleTickMessage::Discovery { delay, target, id } => {
                 tokio::spawn(async move {
+                    event!(
+                        Level::WARN,
+                        %delay,
+                        ?target,
+                        ?id,
+                        "TimerActorScheduleTickMessage::Discovery received"
+                    );
                     sleep(Duration::from_millis(delay as u64)).await;
+                    event!(
+                        Level::WARN,
+                        %delay,
+                        ?target,
+                        "TimerActorScheduleTickMessage::Discovery delay reached"
+                    );
                     target.tell(DiscoveryActorMessage::Tick(id)).await.unwrap()
                 });
             }

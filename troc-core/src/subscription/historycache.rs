@@ -86,8 +86,8 @@ impl ReaderHistoryCache {
     /// # Preconditions
     /// - change.sequence must not be already in use
     pub fn push_change(&mut self, change: CacheChange) -> Result<(), ReaderHistoryCacheError> {
+        let change = CacheChangeContainer::new(change);
         if let Some(depth) = self.depth {
-            let change = CacheChangeContainer::new(change);
             if self.changes.len() == depth as usize {
                 let taken_change = self.changes.pop_back().expect("presence asserted");
                 self.trash.push_front(taken_change.into_inner());
@@ -95,8 +95,9 @@ impl ReaderHistoryCache {
             self.changes.push_front(change);
             Ok(())
         } else {
-            // TODO: handle resources limit cases
-            todo!()
+            // FIXME: handle resources limit cases
+            self.changes.push_front(change);
+            Ok(())
         }
     }
 

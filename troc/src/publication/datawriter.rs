@@ -15,7 +15,7 @@ use chrono::Utc;
 use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Serialize;
 
-use tracing::{Level, event};
+use tracing::{Level, event, instrument};
 use troc_core::{
     ChangeKind, Guid, InlineQos, InstanceHandle, Locator, LocatorList, SequenceNumber,
     SerializedData, cdr,
@@ -116,6 +116,7 @@ pub enum DataWriterActorMessage {
 impl Message<DataWriterActorMessage> for DataWriterActor {
     type Reply = ();
 
+    #[instrument(name = "datawriter", skip_all, fields(guid = %self.writer.get_guid()))]
     async fn handle(
         &mut self,
         msg: DataWriterActorMessage,
@@ -124,9 +125,12 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
         let now = Utc::now().timestamp_millis();
         match msg {
             DataWriterActorMessage::Write { data, instance } => {
-                let change = self
-                    .writer
-                    .new_change(ChangeKind::Alive, Some(data), None, instance);
+                let change = self.writer.new_change(
+                    ChangeKind::Alive,
+                    Some(data),
+                    Some(self.qos.clone()),
+                    instance,
+                );
                 self.writer.add_change(&mut self.effects, change).unwrap();
             }
             DataWriterActorMessage::IncomingMessage { message } => {
@@ -139,7 +143,14 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
             }
             DataWriterActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
-                self.writer.add_proxy(proxy)
+                self.writer.add_proxy(proxy);
+                self.timer
+                    .tell(TimerActorScheduleTickMessage::Writer {
+                        delay: 100,
+                        target: ctx.actor_ref().clone(),
+                    })
+                    .await
+                    .unwrap();
             }
             DataWriterActorMessage::RemoveProxy { guid, locators } => {
                 for locator in locators {
@@ -147,7 +158,10 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 }
                 self.writer.remove_proxy(guid)
             }
-            DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects, now),
+            DataWriterActorMessage::Tick => {
+                event!(Level::WARN, "DataWriterActorMessage::Tick received");
+                self.writer.tick(&mut self.effects, now)
+            }
             DataWriterActorMessage::AddInputWire { wires, locators } => {
                 for wire in &wires {
                     wire.tell(ReceiverWireActorMessage::Start {
@@ -168,11 +182,12 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                     message,
                     locators,
                 } => {
-                    let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
+                    let message = tokio::task::spawn_blocking(move || {
                         // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
-                        let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        let mut emission_buffer = BytesMut::zeroed(65 * 1024);
                         let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
-                        (nb_bytes, emission_buffer)
+                        emission_buffer.split_to(nb_bytes)
                     })
                     .await
                     .unwrap();
@@ -190,7 +205,7 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 Effect::ScheduleTick { id: _, delay } => {
                     self.timer
                         .tell(TimerActorScheduleTickMessage::Writer {
-                            delay,
+                            delay: 200,
                             target: ctx.actor_ref().clone(),
                         })
                         .await
@@ -206,6 +221,7 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
 #[derive(Debug)]
 pub struct DataWriterActorCreateObject {
     pub writer: Writer,
+    pub qos: InlineQos,
     pub discovery: ActorRef<DiscoveryActor>,
     pub timer: ActorRef<TimerActor>,
 }
@@ -213,6 +229,7 @@ pub struct DataWriterActorCreateObject {
 #[derive(Debug)]
 pub struct DataWriterActor {
     writer: Writer,
+    qos: InlineQos,
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
@@ -231,12 +248,14 @@ impl Actor for DataWriterActor {
     ) -> Result<Self, Self::Error> {
         let DataWriterActorCreateObject {
             writer,
+            qos,
             discovery,
             timer,
         } = args;
 
         let datawriter_actor = Self {
             writer,
+            qos,
             effects: Effects::default(),
             discovery,
             timer,

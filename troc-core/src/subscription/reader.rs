@@ -495,7 +495,7 @@ impl Reader {
             effects.push(effect);
 
             event!(
-                Level::WARN,
+                Level::DEBUG,
                 remote_writer_guid = %proxy.get_remote_writer_guid(),
                 %base,
                 ?set,

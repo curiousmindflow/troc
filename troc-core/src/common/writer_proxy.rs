@@ -345,8 +345,8 @@ impl Clone for WriterProxy {
             multicast_locator_list: self.multicast_locator_list.clone(),
             missing_frags: Default::default(),
             last_heartbeat_timestamp_ms: Default::default(),
-            acknack_counter: Default::default(),
-            nackfrag_counter: Default::default(),
+            acknack_counter: Counter::new(),
+            nackfrag_counter: Counter::new(),
         }
     }
 }

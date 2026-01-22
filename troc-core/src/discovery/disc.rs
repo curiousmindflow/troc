@@ -220,25 +220,21 @@ impl Discovery {
     pub fn add_publications_infos(
         &mut self,
         effects: &mut Effects,
-        writer_proxy: WriterProxy,
-        inline_qos: InlineQos,
+        writer_discovery_data: DiscoveredWriterData,
     ) -> Result<(), Error> {
-        let qos = inline_qos.clone();
-        let guid = writer_proxy.get_remote_writer_guid();
+        let writer_entity_duid = writer_discovery_data.proxy.get_remote_writer_guid();
 
-        let writer_entity_id = writer_proxy.get_remote_writer_guid().get_entity_id();
-        let disc_writer_data = DiscoveredWriterData {
-            proxy: writer_proxy,
-            params: inline_qos,
-        };
-
-        let Ok(data) = disc_writer_data.clone().into_serialized_data(Endian::Big) else {
+        let Ok(data) = writer_discovery_data
+            .clone()
+            .into_serialized_data(Endian::Big)
+        else {
             //
             todo!()
         };
 
-        let key = guid.as_bytes();
+        let key = writer_entity_duid.as_bytes();
         let instance = InstanceHandle(key);
+        let qos = writer_discovery_data.params.clone();
 
         let change =
             self.edp_pub_announcer
@@ -246,9 +242,9 @@ impl Discovery {
 
         self.edp_pub_announcer.add_change(effects, change).unwrap();
         self.application_writers_infos.insert(
-            writer_entity_id,
+            writer_entity_duid.get_entity_id(),
             WriterMatchingInfos {
-                disc_data: disc_writer_data,
+                disc_data: writer_discovery_data,
                 matches: HashSet::default(),
             },
         );
@@ -271,25 +267,21 @@ impl Discovery {
     pub fn add_subscriptions_infos(
         &mut self,
         effects: &mut Effects,
-        reader_proxy: ReaderProxy,
-        inline_qos: InlineQos,
+        reader_discovery_data: DiscoveredReaderData,
     ) -> Result<(), Error> {
-        let qos = inline_qos.clone();
-        let guid = reader_proxy.get_remote_reader_guid();
+        let reader_entity_guid = reader_discovery_data.proxy.get_remote_reader_guid();
 
-        let reader_entity_id = reader_proxy.get_remote_reader_guid().get_entity_id();
-        let disc_reader_data = DiscoveredReaderData {
-            proxy: reader_proxy,
-            params: inline_qos,
-        };
-
-        let Ok(data) = disc_reader_data.clone().into_serialized_data(Endian::Big) else {
+        let Ok(data) = reader_discovery_data
+            .clone()
+            .into_serialized_data(Endian::Big)
+        else {
             //
             todo!()
         };
 
-        let key = guid.as_bytes();
+        let key = reader_entity_guid.as_bytes();
         let instance = InstanceHandle(key);
+        let qos = reader_discovery_data.params.clone();
 
         let change =
             self.edp_sub_announcer
@@ -297,9 +289,9 @@ impl Discovery {
 
         self.edp_sub_announcer.add_change(effects, change).unwrap();
         self.application_readers_infos.insert(
-            reader_entity_id,
+            reader_entity_guid.get_entity_id(),
             ReaderMatchingInfos {
-                disc_data: disc_reader_data,
+                disc_data: reader_discovery_data,
                 matches: HashSet::default(),
             },
         );

@@ -8,8 +8,8 @@ use kameo::{
 use serde::Deserialize;
 use tokio::sync::Notify;
 use troc_core::{
-    DdsError, EntityId, EntityKey, Guid, GuidPrefix, Keyed, LocatorList, ReaderBuilder,
-    ReaderProxy, TopicKind,
+    DdsError, DiscoveredReaderData, EntityId, EntityKey, Guid, GuidPrefix, InlineQos, Keyed,
+    LocatorList, ReaderBuilder, ReaderProxy, TopicKind,
 };
 
 use crate::{
@@ -90,25 +90,30 @@ impl Subscriber {
         let reader_guid = Guid::new(self.guid.get_guid_prefix(), writer_id);
 
         let reliable = qos.reliability().into();
-
-        let reader = ReaderBuilder::new(reader_guid, (*qos).into())
-            .reliability(reliable)
-            .build();
-        let reader_proxy = reader.extract_proxy();
-
-        let data_availability_notifier = Arc::new(Notify::new());
-        let reader_actor = DataReaderActor::spawn(DataReaderActorCreateObject {
-            reader,
-            data_availability_notifier: data_availability_notifier.clone(),
-            discovery: self.discovery.clone(),
-            timer: self.timer.clone(),
-        });
+        let mut inline_qos: InlineQos = (*qos).into();
+        inline_qos.topic_name = topic.topic_name.clone();
+        inline_qos.type_name = topic.type_name.clone();
 
         let (input_wires, locators) = self
             .wire_factory
             .ask(ReceiverWireFactoryActorMessage::Applicative)
             .await
             .unwrap();
+
+        let reader = ReaderBuilder::new(reader_guid, inline_qos.clone())
+            .reliability(reliable)
+            .with_unicast_locators(locators.clone())
+            .build();
+        let reader_proxy = reader.extract_proxy();
+
+        let data_availability_notifier = Arc::new(Notify::new());
+        let reader_actor = DataReaderActor::spawn(DataReaderActorCreateObject {
+            reader,
+            qos: inline_qos.clone(),
+            data_availability_notifier: data_availability_notifier.clone(),
+            discovery: self.discovery.clone(),
+            timer: self.timer.clone(),
+        });
 
         let datareader = DataReader::new(
             reader_guid,
@@ -129,6 +134,7 @@ impl Subscriber {
         self.subscriber_actor
             .ask(SubscriberActorMessage {
                 proxy: reader_proxy,
+                qos: inline_qos,
                 readers: reader_actor,
             })
             .await
@@ -141,6 +147,7 @@ impl Subscriber {
 #[derive(Debug)]
 pub struct SubscriberActorMessage {
     proxy: ReaderProxy,
+    qos: InlineQos,
     readers: ActorRef<DataReaderActor>,
 }
 
@@ -153,9 +160,13 @@ impl Message<SubscriberActorMessage> for SubscriberActor {
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         self.readers.push(msg.readers.clone());
+        let disc_reader_data = DiscoveredReaderData {
+            proxy: msg.proxy,
+            params: msg.qos,
+        };
         self.discovery
             .ask(DiscoveryActorMessage::ReaderCreated {
-                reader_proxy: msg.proxy,
+                reader_discovery_data: disc_reader_data,
                 actor: msg.readers,
             })
             .await

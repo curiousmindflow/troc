@@ -41,18 +41,6 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
-pub enum DataReaderProxyCommand {
-    AddProxy {
-        proxy: WriterProxy,
-        emission_infos: Vec<(Locator, Sender<BytesMut>)>,
-    },
-    RemoveProxy {
-        guid: Guid,
-        emission_locators: Vec<Locator>,
-    },
-}
-
 #[derive()]
 pub struct DataReader<T> {
     guid: Guid,
@@ -304,11 +292,12 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                     message,
                     locators,
                 } => {
-                    let (nb_bytes, message) = tokio::task::spawn_blocking(move || {
+                    let message = tokio::task::spawn_blocking(move || {
                         // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
-                        let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
+                        let mut emission_buffer = BytesMut::zeroed(65 * 1024);
                         let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
-                        (nb_bytes, emission_buffer)
+                        emission_buffer.split_to(nb_bytes)
                     })
                     .await
                     .unwrap();
@@ -342,6 +331,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
 #[derive(Debug)]
 pub struct DataReaderActorCreateObject {
     pub reader: Reader,
+    pub qos: InlineQos,
     pub data_availability_notifier: Arc<Notify>,
     pub discovery: ActorRef<DiscoveryActor>,
     pub timer: ActorRef<TimerActor>,
@@ -350,6 +340,7 @@ pub struct DataReaderActorCreateObject {
 #[derive(Debug)]
 pub struct DataReaderActor {
     reader: Reader,
+    qos: InlineQos,
     effects: Effects,
     discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
@@ -369,6 +360,7 @@ impl Actor for DataReaderActor {
     ) -> Result<Self, Self::Error> {
         let DataReaderActorCreateObject {
             reader,
+            qos,
             data_availability_notifier,
             discovery,
             timer,
@@ -376,6 +368,7 @@ impl Actor for DataReaderActor {
 
         let datawriter_actor = Self {
             reader,
+            qos,
             effects: Effects::default(),
             discovery,
             timer,

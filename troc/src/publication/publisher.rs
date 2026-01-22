@@ -4,7 +4,9 @@ use kameo::actor::Spawn;
 use kameo::prelude::Message;
 use serde::Serialize;
 use troc_core::DdsError;
+use troc_core::DiscoveredWriterData;
 use troc_core::EntityKey;
+use troc_core::InlineQos;
 use troc_core::Keyed;
 use troc_core::WriterBuilder;
 use troc_core::WriterProxy;
@@ -92,22 +94,27 @@ impl Publisher {
         let writer_guid = Guid::new(self.guid.get_guid_prefix(), writer_id);
 
         let reliable = qos.reliability().into();
-
-        let writer = WriterBuilder::new(writer_guid, (*qos).into())
-            .reliability(reliable)
-            .build();
-        let writer_proxy = writer.extract_proxy();
-        let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject {
-            writer,
-            discovery: self.discovery.clone(),
-            timer: self.timer.clone(),
-        });
+        let mut inline_qos: InlineQos = (*qos).into();
+        inline_qos.topic_name = topic.topic_name.clone();
+        inline_qos.type_name = topic.type_name.clone();
 
         let (input_wires, locators) = self
             .wire_factory
             .ask(ReceiverWireFactoryActorMessage::Applicative)
             .await
             .unwrap();
+
+        let writer = WriterBuilder::new(writer_guid, inline_qos.clone())
+            .reliability(reliable)
+            .with_unicast_locators(locators.clone())
+            .build();
+        let writer_proxy = writer.extract_proxy();
+        let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject {
+            writer,
+            qos: inline_qos.clone(),
+            discovery: self.discovery.clone(),
+            timer: self.timer.clone(),
+        });
 
         let datawriter = DataWriter::new(writer_guid, *qos, writer_actor.clone()).await;
 
@@ -122,6 +129,7 @@ impl Publisher {
         self.publisher_actor
             .ask(PublisherActorMessage {
                 proxy: writer_proxy,
+                qos: inline_qos,
                 writer: writer_actor,
             })
             .await
@@ -134,6 +142,7 @@ impl Publisher {
 #[derive(Debug)]
 pub struct PublisherActorMessage {
     proxy: WriterProxy,
+    qos: InlineQos,
     writer: ActorRef<DataWriterActor>,
 }
 
@@ -146,9 +155,13 @@ impl Message<PublisherActorMessage> for PublisherActor {
         _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         self.writers.push(msg.writer.clone());
+        let disc_writer_data = DiscoveredWriterData {
+            proxy: msg.proxy,
+            params: msg.qos,
+        };
         self.discovery
             .ask(DiscoveryActorMessage::WriterCreated {
-                writer_proxy: msg.proxy,
+                writer_idscovery_data: disc_writer_data,
                 actor: msg.writer,
             })
             .await
