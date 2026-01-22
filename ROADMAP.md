@@ -1,38 +1,40 @@
 # Roadmap
 1. **Milestone 0: Current status**
-   - ✅ troc-core: sans-io pattern applied
-   - ✅ troc-core: keyed trait
-   - ✅ troc-derive: derive macro attribute to apply Keyed trait
-   - ✅ troc: integration tests
-   - ✅ troc: benchmarks
+  - ✅ troc-core: sans-io layer
+  - ✅ troc-core: keyed trait
+  - ✅ troc-derive: derive macro attribute to apply Keyed trait
+  - ✅ troc: realization layer, using Tokio and Kameo
 2. 🚧 **Milestone 1: Basic working implementation**
-   - 🚧 Basic working DDS implementation
-   - 🚧 Basic discovery (SPDP, SEDP)
-   - 🚧 Essentials QoS only:
-     - 🚧 Reliability
-     - 🚧 History
-     - 🚧 Resource Limits
-   - 🚧 Observability
-   - 🚧 unit and mutation testing on troc-core
-   - 🚧 unit and integration testing on troc
-   - 🚧 CI/CD pipeline
+  - ✅ troc-core: minimal unit tests
+  - ✅ troc: minimal discovery tests
+  - ✅ troc: One Writer one Reader latency benchmark
+  - 🚧 Basic working DDS implementation
+  - 🚧 Basic discovery (SPDP, SEDP)
+  - 🚧 Essentials QoS only:
+    - 🚧 Reliability
+    - 🚧 History
+    - 🚧 Resource Limits
+  - 🚧 Observability
+  - 🚧 unit and mutation testing on troc-core
+  - 🚧 unit and integration testing on troc
+  - 🚧 CI/CD pipeline
 3. 📋 **Milestone 2: Production hardening**
-    - 📋 Performance target achievement
-    - 📋 property testing where needed
-    - 📋 fuzzing
-    - 📋 chaos testing
-    - More QoS:
-      - 📋 Durability
-      - 📋 Deadline
-      - 📋 Lifespan
-      - 📋 Latency budget
+  - 📋 Performance target achievement
+  - 📋 property testing where needed
+  - 📋 fuzzing
+  - 📋 chaos testing
+  - More QoS:
+    - 📋 Durability
+    - 📋 Deadline
+    - 📋 Lifespan
+    - 📋 Latency budget
 4. 📋 **Milestone 3: Further**
-    - 📋 XCDR serialization/deserialization
-    - 📋 IDL to Rust code generator
-    - 📋 CLI tool
-      - 📋 discovery sniffing
-      - 📋 write and read to/from topics
-    - 📋 Interoperability
+  - 📋 XCDR serialization/deserialization
+  - 📋 IDL to Rust code generator
+  - 📋 CLI tool
+    - 📋 discovery sniffing
+    - 📋 write and read to/from topics
+  - 📋 Interoperability
 
 # Experimental
 ## Gossip protocol based Discovery
