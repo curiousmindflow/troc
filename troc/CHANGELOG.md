@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## troc-0.1.0 - 2026-01-22
+#### Features
+- Communication happens - (06e9669) - Alexandre Falher
+
+- - -
+
 ## troc-0.0.1 - 2026-01-22
 #### Bug Fixes
 - too many things debugged at once; discovery works on happy path, communication works for at least one message for one to one writer reader in Reliable - (d75c9cd) - Alexandre Falher
