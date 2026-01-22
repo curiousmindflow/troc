@@ -60,6 +60,7 @@ impl WriterBuilder {
             guid,
             qos,
             reliability: ReliabilityKind::BestEffort,
+            tick_id: TickId::Writer,
             ..Default::default()
         }
     }
