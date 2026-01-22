@@ -74,10 +74,10 @@ impl DataWriterListenerHandle {
     }
 
     pub async fn send_event(&self, event: DataWriterEvent) {
-        if let Some(sender) = &self.sender {
-            if sender.len() <= self.queue_size {
-                let _ = sender.send(event);
-            }
+        if let Some(sender) = &self.sender
+            && sender.len() <= self.queue_size
+        {
+            let _ = sender.send(event);
         }
     }
 }

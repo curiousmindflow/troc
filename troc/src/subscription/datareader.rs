@@ -14,7 +14,7 @@ use tokio::{
     select,
     sync::{
         Notify,
-        mpsc::{Receiver, Sender},
+        broadcast::{Receiver, Sender, channel},
     },
     time::sleep,
 };
@@ -28,6 +28,7 @@ use troc_core::{Effects, Keyed};
 use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
 
 use crate::{
+    DataReaderEvent,
     discovery::DiscoveryActor,
     infrastructure::QosPolicy,
     subscription::{
@@ -70,8 +71,13 @@ impl<T> DataReader<T> {
         self.guid
     }
 
-    pub async fn get_listener(&self) -> Option<DataReaderListener> {
-        unimplemented!()
+    pub async fn get_listener(&self) -> Result<DataReaderListener, DdsError> {
+        let receiver = self
+            .data_reader_actor
+            .ask(DataReaderListenerCreate {})
+            .await
+            .unwrap();
+        Ok(DataReaderListener { receiver })
     }
 
     pub async fn read_next_sample_raw(&mut self) -> Result<DataSample<SerializedData>, DdsError> {
@@ -83,19 +89,12 @@ impl<T> DataReader<T> {
                 .unwrap()
             {
                 Some(change) => {
-                    event!(
-                        Level::WARN,
-                        "read_next_sample_raw available changes received"
-                    );
                     let data = change.data.clone();
                     let infos = SampleInfo::from(&change.infos);
                     let sample = DataSample::<SerializedData>::new(infos, data);
                     return Ok(sample);
                 }
-                None => {
-                    event!(Level::WARN, "read_next_sample_raw no available changes");
-                    self.data_availability_notifier.notified().await
-                }
+                None => self.data_availability_notifier.notified().await,
             }
         }
     }
@@ -220,11 +219,25 @@ impl Message<DataReaderActorReadOneMessage> for DataReaderActor {
     ) -> Self::Reply {
         match msg {
             DataReaderActorReadOneMessage::Read {} => {
-                event!(Level::WARN, "DataReaderActorReadOneMessage::Read processed");
                 let a = self.reader.get_first_available_change();
                 a.cloned()
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct DataReaderListenerCreate;
+
+impl Message<DataReaderListenerCreate> for DataReaderActor {
+    type Reply = Receiver<DataReaderEvent>;
+
+    async fn handle(
+        &mut self,
+        _msg: DataReaderListenerCreate,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self._event_receiver.take().unwrap()
     }
 }
 
@@ -259,16 +272,16 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
         let now = Utc::now().timestamp_millis();
         match msg {
             DataReaderActorMessage::IncomingMessage { message } => {
-                let message = tokio::task::spawn_blocking(move || {
-                    troc_core::Message::deserialize_from(&message).unwrap()
-                })
-                .await
-                .unwrap();
+                let message = troc_core::Message::deserialize_from(&message).unwrap();
+
                 self.reader.ingest(&mut self.effects, now, message).unwrap()
             }
             DataReaderActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
-                self.reader.add_proxy(proxy)
+                self.reader.add_proxy(proxy.clone());
+                let res = self
+                    .event_sender
+                    .send(DataReaderEvent::PublicationMatched(proxy));
             }
             DataReaderActorMessage::RemoveProxy { guid, locators } => {
                 for locator in locators {
@@ -293,10 +306,6 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
         while let Some(effect) = self.effects.pop() {
             match effect {
                 Effect::DataAvailable => {
-                    event!(
-                        Level::WARN,
-                        "Effect::DataAvailable processed: signal to data_availability_notifier"
-                    );
                     self.data_availability_notifier.notify_one();
                 }
                 Effect::Message {
@@ -304,15 +313,10 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
                     message,
                     locators,
                 } => {
-                    let message = tokio::task::spawn_blocking(move || {
-                        // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
-                        // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
-                        let mut emission_buffer = BytesMut::zeroed(65 * 1024);
-                        let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
-                        emission_buffer.split_to(nb_bytes)
-                    })
-                    .await
-                    .unwrap();
+                    let mut buffer = BytesMut::zeroed(65 * 1024);
+                    let nb_bytes = message.serialize_to(&mut buffer).unwrap();
+                    let message = buffer.split_to(nb_bytes);
+
                     for locator in locators.iter() {
                         if let Some(actor) = self.output_wires.get(locator) {
                             actor
@@ -359,6 +363,8 @@ pub struct DataReaderActor {
     input_wires: Vec<ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
     data_availability_notifier: Arc<Notify>,
+    _event_receiver: Option<Receiver<DataReaderEvent>>,
+    event_sender: Sender<DataReaderEvent>,
 }
 
 impl Actor for DataReaderActor {
@@ -378,6 +384,8 @@ impl Actor for DataReaderActor {
             timer,
         } = args;
 
+        let (event_sender, event_receiver) = channel(64);
+
         let datawriter_actor = Self {
             reader,
             qos,
@@ -387,6 +395,8 @@ impl Actor for DataReaderActor {
             input_wires: Default::default(),
             output_wires: Default::default(),
             data_availability_notifier,
+            _event_receiver: Some(event_receiver),
+            event_sender,
         };
 
         Ok(datawriter_actor)
