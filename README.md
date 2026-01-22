@@ -30,6 +30,30 @@ Existing Rust DDS implementations (RustDDS, DustDDS) couple protocol logic with 
 
 **Target:** Sub 50μs latency through careful design and zero-copy operations where possible.
 
+## Demo
+A demonstration can be run using the example provided in the project.
+For this:
+
+1. move to the root of this project.
+2. Run `writer` example
+  Open a new terminal and run:
+  ```shell
+  cargo run --example write
+  ```
+3. Run `read` example
+  Open a new terminal and run:
+  ```shell
+  cargo run --example read
+  ```
+
+> The examples support several options that will be available soon
+
+This demonstration shows a DataWriter that writes every second a message and a DataReader that reads every message it receives.
+Behind the scenes, here is what happened:
+1. Discovery (SPDP): send and receive info, the DomainParticipants are matching each other, exchanging SEDP communication information
+2. Discovery (SEDP): look for remote endpoints (DataReader/DataWriter) that can be matched against local endpoints, match them if compatible
+3. Endpoints can now communicate directly
+
 ## Project status
 ⚠️ **Experimental / Work in Progress**
 

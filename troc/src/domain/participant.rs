@@ -438,6 +438,16 @@ impl Actor for DomainParticipantActor {
             .await
             .unwrap();
 
+        discovery
+            .tell(DiscoveryActorMessage::Tick(TickId::PublicationAnnouncer))
+            .await
+            .unwrap();
+
+        discovery
+            .tell(DiscoveryActorMessage::Tick(TickId::SubscriptionAnnouncer))
+            .await
+            .unwrap();
+
         let domain_participant_actor = Self {
             domain_id: args.domain_id,
             guid: args.guid,

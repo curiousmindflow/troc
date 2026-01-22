@@ -292,7 +292,6 @@ impl Writer {
 
     #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
     pub fn tick(&mut self, effects: &mut Effects, now: i64) {
-        event!(Level::WARN, "DataWriter ticking...");
         if matches!(self.is_reliable, ReliabilityKind::BestEffort) {
             event!(Level::WARN, "BestEffort Writer doesn't send HEARTBEAT");
             return;
@@ -338,15 +337,13 @@ impl Writer {
                 };
                 effects.push(effect);
 
-                event!(Level::WARN, "HEARTBEAT produced");
+                event!(Level::DEBUG, "HEARTBEAT produced");
             } else {
-                event!(Level::WARN, "No unacked changes");
+                event!(Level::DEBUG, "No unacked changes");
             }
 
-            event!(Level::WARN, "pre proxy.are_requested_changes()");
             // NACKED production
             if proxy.are_requested_changes() {
-                event!(Level::WARN, "post proxy.are_requested_changes()");
                 let mut msg = self
                     .message_factory
                     .message()
@@ -354,15 +351,8 @@ impl Writer {
                     .writer(self.guid.get_entity_id());
 
                 let mut gaps = Vec::new();
-                event!(
-                    Level::WARN,
-                    "pre while let Some(request_change_sequence) = proxy.next_requested_change()"
-                );
+
                 while let Some(request_change_sequence) = proxy.next_requested_change() {
-                    event!(
-                        Level::WARN,
-                        "next requested_change: {request_change_sequence}"
-                    );
                     if let Some(requested_change) = self.cache.get_change(request_change_sequence) {
                         msg = msg.data(
                             ContentNature::Data,
@@ -378,11 +368,6 @@ impl Writer {
                     proxy.remove_last_requested_change();
                 }
 
-                event!(
-                    Level::WARN,
-                    "post while let Some(request_change_sequence) = proxy.next_requested_change()"
-                );
-
                 if let Some((gap_first, gap_list)) = Self::build_gap_infos(&gaps) {
                     msg = msg.gap(gap_first, gap_list, None, None);
                 }
@@ -396,13 +381,11 @@ impl Writer {
                 };
                 effects.push(effect);
 
-                event!(Level::WARN, "NACK produced");
+                event!(Level::DEBUG, "NACK produced");
             } else {
-                event!(Level::WARN, "No requested changes");
+                event!(Level::DEBUG, "No requested changes");
             }
         }
-
-        event!(Level::WARN, "DataWriter ticked");
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]

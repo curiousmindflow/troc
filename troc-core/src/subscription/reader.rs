@@ -150,9 +150,31 @@ impl Reader {
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]
-    pub fn get_first_available_change(&self) -> Option<&CacheChangeContainer> {
-        let mut available_changes = self.iter_all_available_changes(SampleStateKind::NotRead);
-        available_changes.next()
+    pub fn get_first_available_change(&mut self) -> Option<&CacheChangeContainer> {
+        let first_available_change_sequence_guid = self
+            .matched_writers
+            .values()
+            .map(|writer| {
+                (
+                    writer.available_changes_max(),
+                    writer.get_remote_writer_guid(),
+                )
+            })
+            .min_by_key(|(seq, _)| *seq);
+
+        event!(
+            Level::WARN,
+            ?first_available_change_sequence_guid,
+            "get_first_available_change"
+        );
+
+        if let Some((seq, guid)) = first_available_change_sequence_guid {
+            let change = self.cache.read_change(guid, seq);
+            event!(Level::WARN, ?change, "get_first_available_change");
+            change
+        } else {
+            None
+        }
     }
 
     #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_writers = ?self.matched_writers))]

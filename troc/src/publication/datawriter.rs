@@ -158,10 +158,7 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 }
                 self.writer.remove_proxy(guid)
             }
-            DataWriterActorMessage::Tick => {
-                event!(Level::WARN, "DataWriterActorMessage::Tick received");
-                self.writer.tick(&mut self.effects, now)
-            }
+            DataWriterActorMessage::Tick => self.writer.tick(&mut self.effects, now),
             DataWriterActorMessage::AddInputWire { wires, locators } => {
                 for wire in &wires {
                     wire.tell(ReceiverWireActorMessage::Start {

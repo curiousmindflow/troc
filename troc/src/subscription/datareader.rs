@@ -83,12 +83,19 @@ impl<T> DataReader<T> {
                 .unwrap()
             {
                 Some(change) => {
+                    event!(
+                        Level::WARN,
+                        "read_next_sample_raw available changes received"
+                    );
                     let data = change.data.clone();
                     let infos = SampleInfo::from(&change.infos);
                     let sample = DataSample::<SerializedData>::new(infos, data);
                     return Ok(sample);
                 }
-                None => self.data_availability_notifier.notified().await,
+                None => {
+                    event!(Level::WARN, "read_next_sample_raw no available changes");
+                    self.data_availability_notifier.notified().await
+                }
             }
         }
     }
@@ -213,6 +220,7 @@ impl Message<DataReaderActorReadOneMessage> for DataReaderActor {
     ) -> Self::Reply {
         match msg {
             DataReaderActorReadOneMessage::Read {} => {
+                event!(Level::WARN, "DataReaderActorReadOneMessage::Read processed");
                 let a = self.reader.get_first_available_change();
                 a.cloned()
             }
@@ -285,6 +293,10 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
         while let Some(effect) = self.effects.pop() {
             match effect {
                 Effect::DataAvailable => {
+                    event!(
+                        Level::WARN,
+                        "Effect::DataAvailable processed: signal to data_availability_notifier"
+                    );
                     self.data_availability_notifier.notify_one();
                 }
                 Effect::Message {

@@ -466,12 +466,20 @@ impl Discovery {
             }
             TickId::PublicationAnnouncer => {
                 self.edp_pub_announcer.tick(effects, now_ms);
+                effects.push(Effect::ScheduleTick {
+                    delay: 2000,
+                    id: TickId::PublicationAnnouncer,
+                });
             }
             TickId::PublicationDetector => {
                 self.edp_pub_detector.tick(effects, now_ms);
             }
             TickId::SubscriptionAnnouncer => {
                 self.edp_sub_announcer.tick(effects, now_ms);
+                effects.push(Effect::ScheduleTick {
+                    delay: 2000,
+                    id: TickId::SubscriptionAnnouncer,
+                });
             }
             TickId::SubscriptionDetector => {
                 self.edp_sub_detector.tick(effects, now_ms);

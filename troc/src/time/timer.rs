@@ -41,14 +41,14 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
             TimerActorScheduleTickMessage::Writer { delay, target } => {
                 tokio::spawn(async move {
                     event!(
-                        Level::WARN,
+                        Level::TRACE,
                         %delay,
                         ?target,
                         "TimerActorScheduleTickMessage::Writer received"
                     );
                     sleep(Duration::from_millis(delay as u64)).await;
                     event!(
-                        Level::WARN,
+                        Level::TRACE,
                         %delay,
                         ?target,
                         "TimerActorScheduleTickMessage::Writer delay reached"
@@ -59,14 +59,14 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
             TimerActorScheduleTickMessage::Reader { delay, target } => {
                 tokio::spawn(async move {
                     event!(
-                        Level::WARN,
+                        Level::TRACE,
                         %delay,
                         ?target,
                         "TimerActorScheduleTickMessage::Reader received"
                     );
                     sleep(Duration::from_millis(delay as u64)).await;
                     event!(
-                        Level::WARN,
+                        Level::TRACE,
                         %delay,
                         ?target,
                         "TimerActorScheduleTickMessage::Reader delay reached"
@@ -77,7 +77,7 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
             TimerActorScheduleTickMessage::Discovery { delay, target, id } => {
                 tokio::spawn(async move {
                     event!(
-                        Level::WARN,
+                        Level::TRACE,
                         %delay,
                         ?target,
                         ?id,
@@ -85,7 +85,7 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
                     );
                     sleep(Duration::from_millis(delay as u64)).await;
                     event!(
-                        Level::WARN,
+                        Level::TRACE,
                         %delay,
                         ?target,
                         "TimerActorScheduleTickMessage::Discovery delay reached"

@@ -9,7 +9,7 @@ use std::{
 };
 
 use clap::Parser;
-use common::{OtlParam, Shape, parse_size, set_up_log};
+use common::{OtlParam, parse_size, set_up_log};
 use troc::{DomainParticipantBuilder, HistoryQosPolicy, ReliabilityQosPolicy, TopicKind};
 
 use tokio::time::sleep;
@@ -26,7 +26,7 @@ struct CliArgs {
     /// - k | K: Kilobyte
     /// - m | M: Megabyte
     /// - g | G: Gigabyte
-    ///     When <unit> is not specified, the default value is Bytes
+    ///   When <unit> is not specified, the default value is Bytes
     #[arg(short = 'p', value_parser = parse_size, default_value_t = 1, verbatim_doc_comment)]
     size: u64,
     /// Delay between sending, in us
@@ -54,9 +54,8 @@ struct CliArgs {
     otl: bool,
 }
 
-// #[tokio::main(flavor = "multi_thread", worker_threads = 8)]
 #[tokio::main(flavor = "current_thread")]
-#[instrument(level = "TRACE", name = "write_example")]
+#[instrument(name = "write_example")]
 async fn main() {
     let cli_args = CliArgs::parse();
 
@@ -115,12 +114,6 @@ async fn main() {
         toggle = !toggle;
 
         let message = Message::new(data_writer.get_guid(), &payload, id, toggle as u64);
-        // let message = Shape {
-        //     color: "RED".to_string(),
-        //     x: 20,
-        //     y: 20,
-        //     shapesize: 100,
-        // };
 
         data_writer.write(message.clone()).await.unwrap();
 
