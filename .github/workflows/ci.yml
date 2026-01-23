@@ -114,6 +114,7 @@ jobs:
 
     deploy:
         needs: [coverage, mutants]
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
         runs-on: ubuntu-latest
         permissions:
             contents: read
