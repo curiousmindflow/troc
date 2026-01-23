@@ -19,7 +19,9 @@ jobs:
             - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
-            - run: cargo install cargo-tarpaulin
+            - uses: taiki-e/install-action@v2
+              with:
+                  tool: cargo-tarpaulin
             - run: cargo tarpaulin --out html --out xml
             - name: Upload coverage pages artifact
               uses: actions/upload-artifact@v4
