@@ -74,7 +74,7 @@ jobs:
               run: |
                   COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' coverage/cobertura.xml | head -1 | awk '{printf "%.2f", $1 * 100}')
                   echo "Coverage: $COVERAGE%"
-                  cat > coverage/coverage-badge.json << EOF
+                  cat > coverage/badge.json << EOF
                   {
                   "schemaVersion": 1,
                   "label": "coverage",
@@ -139,10 +139,10 @@ jobs:
                   path: mutants.out/
             - name: Prepare pages directory
               run: |
-                  mkdir -p pages/coverage pages/mutation
+                  mkdir -p pages/coverage pages/mutants
                   cp -r coverage/tarpaulin-report.html pages/coverage/
-                  cp -r coverage/coverage-badge.json pages/coverage/
-                  cp mutants.out/badge.json pages/mutation/badge.json
+                  cp -r coverage/badge.json pages/coverage/
+                  cp mutants.out/badge.json pages/mutants/badge.json
                   cp .github/pages/index.html pages/
             - name: Configure pages
               uses: actions/configure-pages@v5
