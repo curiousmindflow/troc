@@ -1,11 +1,11 @@
-name: Code coverage
+name: Coverage
 
 on:
-    workflow_dispatch:
     workflow_run:
         workflows: [CI]
         types: [completed]
-        branches: [master]
+        branches: [master, develop]
+    workflow_dispatch:
 
 env:
     CARGO_TERM_COLOR: always
@@ -15,11 +15,14 @@ jobs:
     coverage:
         name: Code Coverage (troc-core)
         runs-on: ubuntu-latest
+        if: ${{ github.event.workflow_run.conclusion == 'success' }}
         steps:
             - uses: actions/checkout@v4
             - uses: dtolnay/rust-toolchain@stable
             - uses: Swatinem/rust-cache@v2
-            - run: cargo install cargo-tarpaulin
+            - uses: taiki-e/install-action@v2
+              with:
+                  tool: cargo-tarpaulin
             - run: cargo tarpaulin --out html --out xml
             - name: Upload coverage pages artifact
               uses: actions/upload-artifact@v4
