@@ -16,7 +16,7 @@ pub struct SerializationError {
 
 impl Display for SerializationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        f.write_str(&self.source.to_string())
     }
 }
 
@@ -27,7 +27,7 @@ pub struct DeserializationError {
 
 impl Display for DeserializationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        f.write_str(&self.source.to_string())
     }
 }
 
