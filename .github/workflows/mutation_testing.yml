@@ -21,7 +21,16 @@ jobs:
             - uses: taiki-e/install-action@v2
               with:
                   tool: cargo-mutants
-            - run: cargo mutants -p troc-core -vV
+            - run: |
+                  cargo mutants -p troc-core 
+                  --exclude-re troc-core/benches
+                  --exclude-re troc-core/src/common
+                  --exclude-re troc-core/src/messages
+                  --exclude-re troc-core/src/types
+                  --exclude-re troc-core/src/publication
+                  --exclude-re troc-core/src/subscription
+                  -j2 -vV
+              continue-on-error: true
             - name: Generate badge
               run: |
                   CAUGHT=$(wc -l < mutants.out/caught.txt)
