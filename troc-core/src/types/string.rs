@@ -24,14 +24,14 @@ impl RtpsString {
         let mut buf = vec![0u8; args.0];
         reader.read_exact(&mut buf)?;
 
-        let string_slice: [u8; 4] = buf[..4].try_into().unwrap();
+        let len_slice: [u8; 4] = buf[..4].try_into().unwrap();
 
         let string_len = match endian {
-            Endian::Little => u32::from_le_bytes(string_slice),
-            Endian::Big => u32::from_be_bytes(string_slice),
+            Endian::Little => u32::from_le_bytes(len_slice),
+            Endian::Big => u32::from_be_bytes(len_slice),
         };
 
-        let str_slice = &buf[4..4 + string_len as usize - 1];
+        let str_slice = &buf[4..4 + string_len as usize];
         let domain_tag_value = String::from_utf8_lossy(str_slice).to_string();
         Ok(domain_tag_value)
     }
@@ -39,7 +39,6 @@ impl RtpsString {
     #[binrw::writer(writer, endian)]
     fn custom_writer(value: &String) -> BinResult<()> {
         let mut value_bytes = value.to_owned().into_bytes();
-        value_bytes.append(&mut vec![0]);
 
         let mut value = match endian {
             Endian::Little => (value_bytes.len() as u32).to_le_bytes().to_vec(),
