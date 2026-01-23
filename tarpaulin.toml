@@ -1,0 +1,5 @@
+[default]
+workspace = true
+exclude-files = ["troc-core/benches/**/*"]
+exclude = ["troc", "troc-derive", "troc-cdr"]
+output-dir = "./coverage"

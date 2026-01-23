@@ -13,7 +13,7 @@ env:
 
 jobs:
     mutation_testing:
-        name: Mutation tests
+        name: Mutation tests (troc-core)
         if: github.event.workflow_run.conclusion == 'success'
         runs-on: ubuntu-latest
         steps:
@@ -21,7 +21,7 @@ jobs:
             - uses: taiki-e/install-action@v2
               with:
                   tool: cargo-mutants
-            - run: cargo mutants -p troc-core --exclude-re troc-core/benches --exclude-re troc-core/src/common --exclude-re troc-core/src/messages --exclude-re troc-core/src/types/ -vV
+            - run: cargo mutants -p troc-core -vV
             - uses: actions/upload-artifact@v4
               if: always()
               with:
