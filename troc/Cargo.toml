@@ -22,7 +22,7 @@ path = "benches/udp_exchange.rs"
 
 [[bench]]
 harness = false
-name = "benchmark"
+name = "latency"
 
 [dependencies]
 md5.workspace = true

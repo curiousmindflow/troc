@@ -1,6 +1,7 @@
 use std::{collections::HashMap, marker::PhantomData};
 
 use crate::{
+    DataWriterEvent,
     discovery::DiscoveryActor,
     infrastructure::QosPolicy,
     publication::DataWriterListener,
@@ -15,6 +16,7 @@ use chrono::Utc;
 use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Serialize;
 
+use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tracing::{Level, event, instrument};
 use troc_core::{
     ChangeKind, Guid, InlineQos, InstanceHandle, Locator, LocatorList, SequenceNumber,
@@ -52,8 +54,13 @@ impl<T> DataWriter<T> {
         self.guid
     }
 
-    pub async fn get_listener(&self) -> Option<DataWriterListener> {
-        unimplemented!()
+    pub async fn get_listener(&self) -> Result<DataWriterListener, DdsError> {
+        let receiver = self
+            .data_writer_actor
+            .ask(DataWriterListenerCreate {})
+            .await
+            .unwrap();
+        Ok(DataWriterListener { receiver })
     }
 
     pub async fn write(&mut self, data: T) -> Result<(), DdsError>
@@ -86,6 +93,21 @@ impl<T> DataWriter<T> {
     // instead leverages the QoS
     pub async fn remove_sample(&self, sequence: SequenceNumber) {
         unimplemented!()
+    }
+}
+
+#[derive(Debug)]
+pub struct DataWriterListenerCreate;
+
+impl Message<DataWriterListenerCreate> for DataWriterActor {
+    type Reply = Receiver<DataWriterEvent>;
+
+    async fn handle(
+        &mut self,
+        _msg: DataWriterListenerCreate,
+        _ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self._event_receiver.take().unwrap()
     }
 }
 
@@ -134,16 +156,13 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                 self.writer.add_change(&mut self.effects, change).unwrap();
             }
             DataWriterActorMessage::IncomingMessage { message } => {
-                let message = tokio::task::spawn_blocking(move || {
-                    troc_core::Message::deserialize_from(&message).unwrap()
-                })
-                .await
-                .unwrap();
+                let message = troc_core::Message::deserialize_from(&message).unwrap();
+
                 self.writer.ingest(&mut self.effects, now, message).unwrap()
             }
             DataWriterActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
-                self.writer.add_proxy(proxy);
+                self.writer.add_proxy(proxy.clone());
                 self.timer
                     .tell(TimerActorScheduleTickMessage::Writer {
                         delay: 100,
@@ -151,6 +170,9 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                     })
                     .await
                     .unwrap();
+                let res = self
+                    .event_sender
+                    .send(DataWriterEvent::SubscriptionMatched(proxy));
             }
             DataWriterActorMessage::RemoveProxy { guid, locators } => {
                 for locator in locators {
@@ -179,15 +201,10 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
                     message,
                     locators,
                 } => {
-                    let message = tokio::task::spawn_blocking(move || {
-                        // TODO: use a Memory pool to avoid creating a buffer each time serialization ocurrs
-                        // let mut emission_buffer = BytesMut::with_capacity(65 * 1024);
-                        let mut emission_buffer = BytesMut::zeroed(65 * 1024);
-                        let nb_bytes = message.serialize_to(&mut emission_buffer).unwrap();
-                        emission_buffer.split_to(nb_bytes)
-                    })
-                    .await
-                    .unwrap();
+                    let mut buffer = BytesMut::zeroed(65 * 1024);
+                    let nb_bytes = message.serialize_to(&mut buffer).unwrap();
+                    let message = buffer.split_to(nb_bytes);
+
                     for locator in locators.iter() {
                         if let Some(actor) = self.output_wires.get(locator) {
                             actor
@@ -232,6 +249,8 @@ pub struct DataWriterActor {
     timer: ActorRef<TimerActor>,
     input_wires: Vec<ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    _event_receiver: Option<Receiver<DataWriterEvent>>,
+    event_sender: Sender<DataWriterEvent>,
 }
 
 impl Actor for DataWriterActor {
@@ -250,6 +269,8 @@ impl Actor for DataWriterActor {
             timer,
         } = args;
 
+        let (event_sender, event_receiver) = channel(64);
+
         let datawriter_actor = Self {
             writer,
             qos,
@@ -258,6 +279,8 @@ impl Actor for DataWriterActor {
             timer,
             input_wires: Default::default(),
             output_wires: Default::default(),
+            _event_receiver: Some(event_receiver),
+            event_sender,
         };
 
         Ok(datawriter_actor)

@@ -131,14 +131,6 @@ impl TryFrom<SocketAddr> for Locator {
     }
 }
 
-impl TryFrom<Locator> for SocketAddr {
-    type Error = ();
-
-    fn try_from(value: Locator) -> Result<Self, Self::Error> {
-        unimplemented!()
-    }
-}
-
 #[cfg(test)]
 mod locator_tests {
     use regex::Regex;

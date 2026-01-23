@@ -16,7 +16,7 @@ pub struct SerializationError {
 
 impl Display for SerializationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        f.write_str(&self.source.to_string())
     }
 }
 
@@ -27,7 +27,7 @@ pub struct DeserializationError {
 
 impl Display for DeserializationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        f.write_str(&self.source.to_string())
     }
 }
 
@@ -171,7 +171,6 @@ mod tests {
 
         let actual_message = Message::deserialize_from(&splitted_buf).unwrap();
 
-        // assert_eq!(expected_message, actual_message);
         let SubmessageContent::Data {
             inline_qos: ref expected_qos,
             ..
@@ -187,7 +186,11 @@ mod tests {
             panic!()
         };
 
-        assert_eq!(expected_qos, actual_qos)
+        dbg!(expected_qos);
+        dbg!(actual_qos);
+
+        assert_eq!(expected_qos, actual_qos);
+        // assert_eq!(expected_message, actual_message);
     }
 
     #[rstest]

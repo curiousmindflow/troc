@@ -1,0 +1,28 @@
+name: Code coverage
+
+on:
+    workflow_dispatch:
+    workflow_run:
+        workflows: [CI]
+        types: [completed]
+        branches: [master]
+
+env:
+    CARGO_TERM_COLOR: always
+    RUST_BACKTRACE: 1
+
+jobs:
+    coverage:
+        name: Code Coverage (troc-core)
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+            - uses: Swatinem/rust-cache@v2
+            - run: cargo install cargo-tarpaulin
+            - run: cargo tarpaulin --out html --out xml
+            - name: Upload coverage pages artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: coverage-report
+                  path: coverage/

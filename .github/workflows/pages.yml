@@ -2,7 +2,7 @@ name: Pages
 
 on:
     workflow_run:
-        workflows: ["CI"]
+        workflows: ["Code coverage", "Mutation testing"]
         branches: [master]
         types:
             - completed
@@ -21,24 +21,32 @@ jobs:
             url: ${{ steps.deployment.outputs.page_url }}
         steps:
             - uses: actions/checkout@v4
-            - uses: actions/download-artifact@v4
+            - name: Fetch coverage report
+              uses: actions/download-artifact@v4
               with:
                   name: coverage-report
                   run-id: ${{ github.event.workflow_run.id }}
                   github-token: ${{ secrets.GITHUB_TOKEN }}
                   path: coverage/
-            - uses: actions/configure-pages@v5
-            - run: |
-                  mkdir -p _pages/coverage
-                  cp -r coverage/* _pages/coverage/
-                  cp .github/pages/index.html _pages/
-            - run: |
+            - name: Fetch mutation assets
+              uses: actions/download-artifact@v4
+              with:
+                  name: mutants-out
+                  run-id: ${{ github.event.workflow_run.id }}
+                  github-token: ${{ secrets.GITHUB_TOKEN }}
+                  path: mutants.out/
+            - name: Create pages directory
+              run: mkdir -p pages
+            - name: Copy coverage report in pages directory
+              run: |
+                  mkdir -p pages/coverage
+                  cp -r coverage/* pages/coverage/
+                  cp .github/pages/index.html pages/
+            - name: Create coverage badge
+              run: |
                   COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' coverage/cobertura.xml | head -1 | awk '{printf "%.2f", $1 * 100}')
-                  echo "COVERAGE=${COVERAGE}" >> $GITHUB_ENV
                   echo "Coverage: $COVERAGE%"
-            - run: |
-                  mkdir -p _pages
-                  cat > _pages/coverage-badge.json << EOF
+                  cat > pages/coverage-badge.json << EOF
                   {
                   "schemaVersion": 1,
                   "label": "coverage",
@@ -46,8 +54,18 @@ jobs:
                   "color": "$(if (( $(echo "${COVERAGE} >= 80" | bc -l) )); then echo "brightgreen"; else echo "orange"; fi)"
                   }
                   EOF
-            - uses: actions/upload-pages-artifact@v3
+            - name: Generate mutation badge
+              run: |
+                  CAUGHT=$(wc -l < mutants.out/caught.txt)
+                  MISSED=$(wc -l < mutants.out/missed.txt)
+                  TOTAL=$((CAUGHT + MISSED))
+                  PERCENT=$((CAUGHT * 100 / TOTAL))
+                  echo "{\"schemaVersion\":1,\"label\":\"mutants\",\"message\":\"${CAUGHT}/${TOTAL} (${PERCENT}%)\",\"color\":\"$([ $PERCENT -gt 80 ] && echo 'green' || echo 'orange')\"}" > mutants.out/badge.json
+            - name: Configure pages
+              uses: actions/configure-pages@v5
+            - name: Upload pages
+              uses: actions/upload-pages-artifact@v3
               with:
-                  path: _pages/
+                  path: pages/
             - id: deployment
               uses: actions/deploy-pages@v4

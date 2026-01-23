@@ -97,7 +97,7 @@ impl SequenceNumberSet {
             }
         }
 
-        let bitvec = bitvec
+        bitvec
             .to_bytes()
             .into_iter()
             .collect::<Vec<_>>()
@@ -107,9 +107,7 @@ impl SequenceNumberSet {
             .map(<[u8; 4] as TryFrom<&[u8]>>::try_from)
             .map(Result::unwrap)
             .map(u32::from_be_bytes)
-            .collect::<Vec<_>>();
-
-        bitvec
+            .collect::<Vec<_>>()
     }
 }
 
@@ -157,10 +155,10 @@ mod sequence_number_set_tests {
 
     #[rstest]
     #[case(SequenceNumber(1234), &[], 0, &[], 12)]
-    #[case(SequenceNumber(1234), &[SequenceNumber(1234)], 1, &[0b_0000_0000_0000_0000_0000_0000_0000_0001], 16)]
-    #[case(SequenceNumber(1234), &[SequenceNumber(1235)], 2, &[0b_0000_0000_0000_0000_0000_0000_0000_0010], 16)]
-    #[case(SequenceNumber(1234), &[SequenceNumber(1265)], 32, &[0b_1000_0000_0000_0000_0000_0000_0000_0000], 16)]
-    #[case(SequenceNumber(1234), &[SequenceNumber(1266)], 33, &[0b_0000_0000_0000_0000_0000_0000_0000_0000, 0b_0000_0000_0000_0000_0000_0000_0000_0001], 20)]
+    #[case(SequenceNumber(1234), &[SequenceNumber(1234)], 1, &[0b_1000_0000_0000_0000_0000_0000_0000_0000], 16)]
+    #[case(SequenceNumber(1234), &[SequenceNumber(1235)], 2, &[0b_0100_0000_0000_0000_0000_0000_0000_0000], 16)]
+    #[case(SequenceNumber(1234), &[SequenceNumber(1265)], 32, &[0b_0000_0000_0000_0000_0000_0000_0000_0001], 16)]
+    #[case(SequenceNumber(1234), &[SequenceNumber(1266)], 33, &[0b_0000_0000_0000_0000_0000_0000_0000_0000, 0b_1000_0000_0000_0000_0000_0000_0000_0000], 20)]
     fn test_frag_num_set(
         #[case] base: SequenceNumber,
         #[case] set: &[SequenceNumber],
@@ -169,6 +167,8 @@ mod sequence_number_set_tests {
         #[case] expected_size: usize,
     ) {
         let seq_num_set = SequenceNumberSet::new(base, set);
+        dbg!(&seq_num_set.bitmaps);
+
         assert_eq!(expected_num_bits, seq_num_set.num_bits);
         assert_eq!(expected_bitmap, seq_num_set.bitmaps);
         assert_eq!(expected_size, seq_num_set.size());

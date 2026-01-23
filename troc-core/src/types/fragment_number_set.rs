@@ -94,7 +94,7 @@ impl FragmentNumberSet {
             }
         }
 
-        let bitvec = bitvec
+        bitvec
             .to_bytes()
             .into_iter()
             .map(|block| block.swap_bits())
@@ -105,9 +105,7 @@ impl FragmentNumberSet {
             .map(<[u8; 4] as TryFrom<&[u8]>>::try_from)
             .map(Result::unwrap)
             .map(u32::from_ne_bytes)
-            .collect::<Vec<_>>();
-
-        bitvec
+            .collect::<Vec<_>>()
     }
 }
 
