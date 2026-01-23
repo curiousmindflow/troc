@@ -4,7 +4,7 @@
 set -e
 
 MUTANTS_DIR="mutants.out"
-OUTPUT_FILE="mutants.out/mutation-report.html"
+OUTPUT_FILE="mutants_report.html"
 
 if [ ! -d ".github" ]; then
     echo "Error: Must be run from troc root directory"
@@ -40,11 +40,17 @@ fi
 echo "Found: $caught_count caught, $missed_count missed, $timeout_count timeout, $unviable_count unviable"
 
 # Function to convert mutant description to filename
+# Input: "troc-core/src/discovery/disc.rs:411:17: delete match arm"
+# Output: "troc-core__src__discovery__disc.rs_line_411_col_17"
 desc_to_filename() {
     local desc="$1"
+    # Extract just the location part (before the colon describing the mutation)
     local location=$(echo "$desc" | cut -d: -f1-3)
+    # Replace / with __
     local step1=$(echo "$location" | sed 's/\//__/g')
+    # Replace first : with _line_
     local step2=$(echo "$step1" | sed 's/:/_line_/')
+    # Replace second : with _col_
     local step3=$(echo "$step2" | sed 's/:/_col_/')
     echo "$step3"
 }
@@ -97,11 +103,6 @@ cat > "$OUTPUT_FILE" << 'EOF'
             color: #7f8c8d;
             margin: 30px 0 15px 0;
             font-size: 1.5em;
-        }
-        h4 {
-            color: #95a5a6;
-            margin: 20px 0 10px 0;
-            font-size: 1.2em;
         }
         .summary {
             background: #ecf0f1;
@@ -168,7 +169,6 @@ cat > "$OUTPUT_FILE" << 'EOF'
             overflow-y: auto;
             white-space: pre-wrap;
             word-wrap: break-word;
-            margin-bottom: 15px;
         }
         .diff-content {
             background: #f8f9fa;
@@ -279,33 +279,24 @@ cat >> "$OUTPUT_FILE" << 'EOF'
         <div>
 EOF
 
-# Generate missed content - DIFF ONLY
+# Generate missed content
 if [ -f "$MUTANTS_DIR/missed.txt" ]; then
     while IFS= read -r mutant_desc; do
         [ -z "$mutant_desc" ] && continue
         
         mutant_id=$(make_id "$mutant_desc")
         filename=$(desc_to_filename "$mutant_desc")
-        diff_file="$MUTANTS_DIR/diff/${filename}.diff"
+        log_file="$MUTANTS_DIR/log/${filename}.log"
         
         echo "            <div class=\"mutant-entry missed\" id=\"missed-${mutant_id}\">" >> "$OUTPUT_FILE"
         echo "                <div class=\"mutant-title\">${mutant_desc}</div>" >> "$OUTPUT_FILE"
         
-        if [ -f "$diff_file" ]; then
-            echo "                <div class=\"diff-content\">" >> "$OUTPUT_FILE"
-            while IFS= read -r line; do
-                escaped=$(echo "$line" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g')
-                if [[ $line == +* ]] && [[ $line != +++* ]]; then
-                    echo "<span class=\"diff-add\">$escaped</span>" >> "$OUTPUT_FILE"
-                elif [[ $line == -* ]] && [[ $line != ---* ]]; then
-                    echo "<span class=\"diff-remove\">$escaped</span>" >> "$OUTPUT_FILE"
-                else
-                    echo "<span class=\"diff-context\">$escaped</span>" >> "$OUTPUT_FILE"
-                fi
-            done < "$diff_file"
+        if [ -f "$log_file" ]; then
+            echo "                <div class=\"log-content\">" >> "$OUTPUT_FILE"
+            sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$log_file" >> "$OUTPUT_FILE"
             echo "                </div>" >> "$OUTPUT_FILE"
         else
-            echo "                <p style='color: #95a5a6;'>Diff file not found</p>" >> "$OUTPUT_FILE"
+            echo "                <p style='color: #95a5a6;'>Log file not found: ${filename}.log</p>" >> "$OUTPUT_FILE"
         fi
         
         echo "            </div>" >> "$OUTPUT_FILE"
@@ -319,7 +310,7 @@ cat >> "$OUTPUT_FILE" << 'EOF'
         <div>
 EOF
 
-# Generate caught content - DIFF + TEST LOG
+# Generate caught content
 if [ -f "$MUTANTS_DIR/caught.txt" ]; then
     while IFS= read -r mutant_desc; do
         [ -z "$mutant_desc" ] && continue
@@ -327,13 +318,10 @@ if [ -f "$MUTANTS_DIR/caught.txt" ]; then
         mutant_id=$(make_id "$mutant_desc")
         filename=$(desc_to_filename "$mutant_desc")
         diff_file="$MUTANTS_DIR/diff/${filename}.diff"
-        log_file="$MUTANTS_DIR/log/${filename}.log"
         
         echo "            <div class=\"mutant-entry caught\" id=\"caught-${mutant_id}\">" >> "$OUTPUT_FILE"
         echo "                <div class=\"mutant-title\">${mutant_desc}</div>" >> "$OUTPUT_FILE"
         
-        # Show diff
-        echo "                <h4>Mutation Diff</h4>" >> "$OUTPUT_FILE"
         if [ -f "$diff_file" ]; then
             echo "                <div class=\"diff-content\">" >> "$OUTPUT_FILE"
             while IFS= read -r line; do
@@ -348,17 +336,7 @@ if [ -f "$MUTANTS_DIR/caught.txt" ]; then
             done < "$diff_file"
             echo "                </div>" >> "$OUTPUT_FILE"
         else
-            echo "                <p style='color: #95a5a6;'>Diff file not found</p>" >> "$OUTPUT_FILE"
-        fi
-        
-        # Show test log (which tests failed)
-        echo "                <h4>Test Results (Failures)</h4>" >> "$OUTPUT_FILE"
-        if [ -f "$log_file" ]; then
-            echo "                <div class=\"log-content\">" >> "$OUTPUT_FILE"
-            sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g' "$log_file" >> "$OUTPUT_FILE"
-            echo "                </div>" >> "$OUTPUT_FILE"
-        else
-            echo "                <p style='color: #95a5a6;'>Log file not found</p>" >> "$OUTPUT_FILE"
+            echo "                <p style='color: #95a5a6;'>Diff file not found: ${filename}.diff</p>" >> "$OUTPUT_FILE"
         fi
         
         echo "            </div>" >> "$OUTPUT_FILE"

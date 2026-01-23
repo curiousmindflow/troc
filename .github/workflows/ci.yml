@@ -106,6 +106,8 @@ jobs:
                   TOTAL=$((CAUGHT + MISSED))
                   PERCENT=$((CAUGHT * 100 / TOTAL))
                   echo "{\"schemaVersion\":1,\"label\":\"mutants\",\"message\":\"${CAUGHT}/${TOTAL} (${PERCENT}%)\",\"color\":\"$([ $PERCENT -gt 80 ] && echo 'green' || echo 'orange')\"}" > mutants.out/badge.json
+            - name: Generate report
+              run: .github/utils/gen_mutation_report.sh
             - uses: actions/upload-artifact@v4
               if: always()
               with:
@@ -142,7 +144,8 @@ jobs:
                   mkdir -p pages/coverage pages/mutants
                   cp -r coverage/tarpaulin-report.html pages/coverage/
                   cp -r coverage/badge.json pages/coverage/
-                  cp mutants.out/badge.json pages/mutants/badge.json
+                  cp mutants.out/badge.json pages/mutants/
+                  cp mutants.out/mutation-report.html pages/mutants/
                   cp .github/pages/index.html pages/
             - name: Configure pages
               uses: actions/configure-pages@v5
