@@ -2,7 +2,7 @@ name: Pages
 
 on:
     workflow_run:
-        workflows: ["Code coverage", "Mutation testing"]
+        workflows: [Coverage, Mutants]
         branches: [master, develop]
         types: [completed]
 

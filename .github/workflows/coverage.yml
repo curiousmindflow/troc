@@ -1,4 +1,4 @@
-name: Code coverage
+name: Coverage
 
 on:
     workflow_run:
