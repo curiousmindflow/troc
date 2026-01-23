@@ -3,9 +3,8 @@ name: Pages
 on:
     workflow_run:
         workflows: ["Code coverage", "Mutation testing"]
-        branches: [master]
-        types:
-            - completed
+        branches: [master, develop]
+        types: [completed]
 
 permissions:
     contents: read

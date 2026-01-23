@@ -1,11 +1,11 @@
 name: Mutation testing
 
 on:
-    workflow_dispatch:
     workflow_run:
         workflows: [CI]
         types: [completed]
-        branches: [master]
+        branches: [master, develop]
+    workflow_dispatch:
 
 env:
     CARGO_TERM_COLOR: always
@@ -14,7 +14,7 @@ env:
 jobs:
     mutation_testing:
         name: Mutation tests (troc-core)
-        if: github.event.workflow_run.conclusion == 'success'
+        if: ${{ github.event.workflow_run.conclusion == 'success' }}
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
