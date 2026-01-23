@@ -68,3 +68,4 @@ jobs:
                   path: pages/
             - id: deployment
               uses: actions/deploy-pages@v4
+              if: github.event.workflow_run.head_branch == 'master'
