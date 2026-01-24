@@ -7,11 +7,11 @@ use kameo::{Actor, prelude::Message};
 use tokio::sync::broadcast::Sender;
 use tracing::{Level, event, instrument, span};
 use troc_core::{
-    DdsError, DiscoveredReaderData, DiscoveredWriterData, Discovery as ProtocolDiscovery, Effect,
-    Effects, GuidPrefix, Locator, ReaderProxy, TickId, WriterProxy,
+    DdsError, DiscoveredReaderData, DiscoveredWriterData, Discovery as ProtocolDiscovery,
+    DiscoveryBuilder, DiscoveryConfiguration, Effect, Effects, GuidPrefix, Locator, TickId,
 };
 
-use troc_core::{EntityId, InlineQos, ParticipantProxy};
+use troc_core::{EntityId, ParticipantProxy};
 
 use crate::ParticipantEvent;
 use crate::publication::{DataWriterActor, DataWriterActorMessage};
@@ -38,12 +38,6 @@ pub enum DiscoveryActorMessage {
     Tick(TickId),
     IncomingMessage {
         message: BytesMut,
-    },
-    AddInputWire {
-        wires: HashMap<Locator, ActorRef<ReceiverWireActor>>,
-    },
-    AddOutputWires {
-        wires: HashMap<Locator, ActorRef<SenderWireActor>>,
     },
 }
 
@@ -117,23 +111,94 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     .ingest(&mut self.effects, message, now)
                     .unwrap();
             }
-            DiscoveryActorMessage::AddInputWire { wires } => {
-                for wire in wires.values() {
-                    wire.tell(ReceiverWireActorMessage::Start {
-                        actor_dest: ctx.actor_ref().clone(),
-                    })
-                    .await
-                    .unwrap();
-                }
-                self.input_wires.extend(wires);
-                event!(Level::DEBUG, "Input wires received");
-            }
-            DiscoveryActorMessage::AddOutputWires { wires } => {
-                self.output_wires.extend(wires);
-                event!(Level::DEBUG, "Output wires received");
-            }
         }
 
+        self.process_effects(ctx.actor_ref().clone()).await;
+    }
+}
+
+#[derive(Debug)]
+pub struct DiscoveryActorCreateObject {
+    pub participant_proxy: ParticipantProxy,
+    pub discovery_configuration: DiscoveryConfiguration,
+    pub input_wires: HashMap<Locator, ActorRef<ReceiverWireActor>>,
+    pub output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    pub event_sender: Sender<ParticipantEvent>,
+    pub timer: ActorRef<TimerActor>,
+    pub wire_factory: ActorRef<WireFactoryActor>,
+}
+
+#[derive()]
+pub struct DiscoveryActor {
+    participant_guid_prefix: GuidPrefix,
+    discovery: ProtocolDiscovery,
+    effects: Effects,
+    timer: ActorRef<TimerActor>,
+    wire_factory: ActorRef<WireFactoryActor>,
+    event_sender: Sender<ParticipantEvent>,
+    _input_wires: HashMap<Locator, ActorRef<ReceiverWireActor>>,
+    output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
+    local_readers: HashMap<EntityId, ActorRef<DataReaderActor>>,
+    local_writers: HashMap<EntityId, ActorRef<DataWriterActor>>,
+}
+
+impl Actor for DiscoveryActor {
+    type Args = DiscoveryActorCreateObject;
+
+    type Error = DdsError;
+
+    async fn on_start(
+        args: Self::Args,
+        actor_ref: kameo::prelude::ActorRef<Self>,
+    ) -> Result<Self, Self::Error> {
+        let DiscoveryActorCreateObject {
+            participant_proxy,
+            discovery_configuration,
+            input_wires,
+            output_wires,
+            event_sender,
+            timer,
+            wire_factory,
+        } = args;
+
+        let participant_guid_prefix = participant_proxy.get_guid_prefix();
+
+        let mut discovery =
+            DiscoveryBuilder::new(participant_guid_prefix, discovery_configuration).build();
+
+        for wire in input_wires.values() {
+            wire.tell(ReceiverWireActorMessage::Start {
+                actor_dest: actor_ref.clone(),
+            })
+            .await
+            .unwrap();
+        }
+
+        let mut effects = Effects::new();
+
+        discovery.init(&mut effects, participant_proxy).unwrap();
+
+        let mut actor = Self {
+            participant_guid_prefix,
+            discovery,
+            effects,
+            timer,
+            wire_factory,
+            event_sender,
+            _input_wires: input_wires,
+            output_wires,
+            local_readers: Default::default(),
+            local_writers: Default::default(),
+        };
+
+        actor.process_effects(actor_ref.clone()).await;
+
+        Ok(actor)
+    }
+}
+
+impl DiscoveryActor {
+    async fn process_effects(&mut self, actor_ref: kameo::prelude::ActorRef<Self>) {
         while let Some(effect) = self.effects.pop() {
             match effect {
                 Effect::Message {
@@ -303,7 +368,7 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                     self.timer
                         .tell(TimerActorScheduleTickMessage::Discovery {
                             delay,
-                            target: ctx.actor_ref().clone(),
+                            target: actor_ref.clone(),
                             id,
                         })
                         .await
@@ -313,55 +378,6 @@ impl Message<DiscoveryActorMessage> for DiscoveryActor {
                 _ => continue,
             }
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct DiscoveryActorCreateObject {
-    pub participant_guid_prefix: GuidPrefix,
-    pub discovery: ProtocolDiscovery,
-    pub event_sender: Sender<ParticipantEvent>,
-    pub timer: ActorRef<TimerActor>,
-    pub wire_factory: ActorRef<WireFactoryActor>,
-}
-
-#[derive()]
-pub struct DiscoveryActor {
-    participant_guid_prefix: GuidPrefix,
-    discovery: ProtocolDiscovery,
-    effects: Effects,
-    timer: ActorRef<TimerActor>,
-    wire_factory: ActorRef<WireFactoryActor>,
-    event_sender: Sender<ParticipantEvent>,
-    input_wires: HashMap<Locator, ActorRef<ReceiverWireActor>>,
-    output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
-    local_readers: HashMap<EntityId, ActorRef<DataReaderActor>>,
-    local_writers: HashMap<EntityId, ActorRef<DataWriterActor>>,
-}
-
-impl Actor for DiscoveryActor {
-    type Args = DiscoveryActorCreateObject;
-
-    type Error = DdsError;
-
-    async fn on_start(
-        args: Self::Args,
-        _actor_ref: kameo::prelude::ActorRef<Self>,
-    ) -> Result<Self, Self::Error> {
-        let actor = Self {
-            participant_guid_prefix: args.participant_guid_prefix,
-            discovery: args.discovery,
-            effects: Effects::default(),
-            timer: args.timer,
-            wire_factory: args.wire_factory,
-            event_sender: args.event_sender,
-            input_wires: Default::default(),
-            output_wires: Default::default(),
-            local_readers: Default::default(),
-            local_writers: Default::default(),
-        };
-
-        Ok(actor)
     }
 }
 

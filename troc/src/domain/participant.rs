@@ -361,31 +361,6 @@ impl Actor for DomainParticipantActor {
         metatraffic_multicast_locator_list.sort();
         metatraffic_multicast_locator_list.dedup();
 
-        let discovery_configuration = DiscoveryConfiguration {
-            announcement_period: args.configuration.discovery.announcement_period.as_millis()
-                as i64,
-            lease_duration: args.configuration.discovery.lease_duration,
-        };
-        let mut discovery =
-            DiscoveryBuilder::new(args.guid.get_guid_prefix(), discovery_configuration).build();
-        discovery.add_pdp_announcer_proxy(
-            Default::default(),
-            metatraffic_multicast_locator_list.clone(),
-        );
-        discovery.add_pdp_detector_proxy(
-            Default::default(),
-            metatraffic_multicast_locator_list.clone(),
-        );
-
-        let discovery = DiscoveryActor::spawn(DiscoveryActorCreateObject {
-            participant_guid_prefix: args.guid.get_guid_prefix(),
-            discovery,
-            event_sender,
-            timer: timer.clone(),
-            wire_factory: wire_factory.clone(),
-        });
-        discovery.wait_for_startup().await;
-        actor_ref.link(&discovery).await;
         let entity_identifier = EntityIdentifierActor::spawn(());
         entity_identifier.wait_for_startup().await;
         actor_ref.link(&entity_identifier).await;
@@ -414,39 +389,26 @@ impl Actor for DomainParticipantActor {
             BuiltinEndpointQos::default(),
         );
 
-        discovery
-            .ask(DiscoveryActorMessage::AddInputWire { wires: input_wires })
-            .await
-            .unwrap();
+        let discovery_configuration = DiscoveryConfiguration {
+            announcement_period: args.configuration.discovery.announcement_period.as_millis()
+                as i64,
+            lease_duration: args.configuration.discovery.lease_duration,
+            metatraffic_unicast_locator_list,
+            metatraffic_multicast_locator_list,
+        };
 
-        discovery
-            .ask(DiscoveryActorMessage::AddOutputWires {
-                wires: output_wires,
-            })
-            .await
-            .unwrap();
+        let discovery = DiscoveryActor::spawn(DiscoveryActorCreateObject {
+            participant_proxy: infos.clone(),
+            discovery_configuration,
+            input_wires,
+            output_wires,
+            event_sender,
+            timer: timer.clone(),
+            wire_factory: wire_factory.clone(),
+        });
 
-        discovery
-            .tell(DiscoveryActorMessage::ParticipantProxyChanged(
-                infos.clone(),
-            ))
-            .await
-            .unwrap();
-
-        discovery
-            .tell(DiscoveryActorMessage::Tick(TickId::ParticipantAnnounce))
-            .await
-            .unwrap();
-
-        discovery
-            .tell(DiscoveryActorMessage::Tick(TickId::PublicationAnnouncer))
-            .await
-            .unwrap();
-
-        discovery
-            .tell(DiscoveryActorMessage::Tick(TickId::SubscriptionAnnouncer))
-            .await
-            .unwrap();
+        discovery.wait_for_startup().await;
+        actor_ref.link(&discovery).await;
 
         let domain_participant_actor = Self {
             domain_id: args.domain_id,

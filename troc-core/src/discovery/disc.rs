@@ -42,6 +42,8 @@ pub struct Announce {
 pub struct DiscoveryConfiguration {
     pub announcement_period: i64,
     pub lease_duration: Duration,
+    pub metatraffic_unicast_locator_list: LocatorList,
+    pub metatraffic_multicast_locator_list: LocatorList,
 }
 
 impl DiscoveryConfiguration {
@@ -55,6 +57,8 @@ impl Default for DiscoveryConfiguration {
         Self {
             announcement_period: 50000,
             lease_duration: Duration::from_millis(30000),
+            metatraffic_unicast_locator_list: LocatorList::default(),
+            metatraffic_multicast_locator_list: LocatorList::default(),
         }
     }
 }
@@ -105,7 +109,7 @@ impl DiscoveryBuilder {
             last_announcement_timestamp_ms,
         } = self;
 
-        let pdp_announcer = WriterBuilder::new(
+        let mut pdp_announcer = WriterBuilder::new(
             Guid::new(
                 participant_guid_prefix,
                 ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER,
@@ -114,7 +118,17 @@ impl DiscoveryBuilder {
         )
         .build();
 
-        let pdp_detector = ReaderBuilder::new(
+        let pdp_announcer_proxy = ReaderProxy::new(
+            Guid::default(),
+            EntityId::default(),
+            false,
+            true,
+            config.metatraffic_unicast_locator_list.clone(),
+            config.metatraffic_multicast_locator_list.clone(),
+        );
+        pdp_announcer.add_proxy(pdp_announcer_proxy);
+
+        let mut pdp_detector = ReaderBuilder::new(
             Guid::new(
                 participant_guid_prefix,
                 ENTITYID_SPDP_BUILTIN_PARTICIPANT_DETECTOR,
@@ -122,6 +136,15 @@ impl DiscoveryBuilder {
             InlineQos::default(),
         )
         .build();
+
+        let pdp_detector_proxy = WriterProxy::new(
+            Guid::default(),
+            EntityId::default(),
+            59 * 1024,
+            config.metatraffic_unicast_locator_list.clone(),
+            config.metatraffic_multicast_locator_list.clone(),
+        );
+        pdp_detector.add_proxy(pdp_detector_proxy);
 
         let edp_pub_announcer = WriterBuilder::new(
             Guid::new(
@@ -203,6 +226,24 @@ pub struct Discovery {
 }
 
 impl Discovery {
+    #[instrument(level = Level::TRACE, skip_all, fields())]
+    pub fn init(&mut self, effects: &mut Effects, infos: ParticipantProxy) -> Result<(), Error> {
+        self.update_participant_infos(effects, infos)?;
+        effects.push(Effect::ScheduleTick {
+            delay: self.config.announcement_period,
+            id: TickId::ParticipantAnnounce,
+        });
+        effects.push(Effect::ScheduleTick {
+            delay: self.config.announcement_period,
+            id: TickId::PublicationAnnouncer,
+        });
+        effects.push(Effect::ScheduleTick {
+            delay: self.config.announcement_period,
+            id: TickId::SubscriptionAnnouncer,
+        });
+        Ok(())
+    }
+
     #[instrument(level = Level::TRACE, skip_all, fields())]
     pub fn update_participant_infos(
         &mut self,
@@ -490,39 +531,6 @@ impl Discovery {
         event!(Level::DEBUG, "Discovery ticked");
 
         Ok(())
-    }
-
-    #[instrument(level = Level::TRACE, skip_all, fields())]
-    pub fn add_pdp_announcer_proxy(
-        &mut self,
-        unicast_locators: LocatorList,
-        multicast_locators: LocatorList,
-    ) {
-        let pdp_announcer_proxy = ReaderProxy::new(
-            Guid::default(),
-            EntityId::default(),
-            false,
-            true,
-            unicast_locators,
-            multicast_locators,
-        );
-        self.pdp_announcer.add_proxy(pdp_announcer_proxy);
-    }
-
-    #[instrument(level = Level::TRACE, skip_all, fields())]
-    pub fn add_pdp_detector_proxy(
-        &mut self,
-        unicast_locators: LocatorList,
-        multicast_locators: LocatorList,
-    ) {
-        let pdp_detector_proxy = WriterProxy::new(
-            Guid::default(),
-            EntityId::default(),
-            59 * 1024,
-            unicast_locators,
-            multicast_locators,
-        );
-        self.pdp_detector.add_proxy(pdp_detector_proxy);
     }
 
     fn produce_participant_announce(&mut self, effects: &mut Effects) -> Result<(), Error> {
@@ -937,14 +945,9 @@ mod tests {
         #[from(setup_participant_infos_0)] infos: ParticipantProxy,
         #[from(setup_configuration)] config: DiscoveryConfiguration,
     ) -> Discovery {
-        let mut discovery = DiscoveryBuilder::new(infos.get_guid_prefix(), config)
+        DiscoveryBuilder::new(infos.get_guid_prefix(), config)
             .last_announcement(0)
-            .build();
-        let locators = vec![Locator::from_str("0.0.0.0:0:UDPV4").unwrap()];
-        let locators = LocatorList::new(locators);
-        discovery.add_pdp_announcer_proxy(Default::default(), locators.clone());
-        discovery.add_pdp_detector_proxy(Default::default(), locators);
-        discovery
+            .build()
     }
 
     #[fixture]
@@ -987,8 +990,11 @@ mod tests {
 
     #[fixture]
     fn setup_configuration() -> DiscoveryConfiguration {
+        let locators = vec![Locator::from_str("0.0.0.0:0:UDPV4").unwrap()];
+        let locators = LocatorList::new(locators);
         DiscoveryConfiguration {
             announcement_period: 500,
+            metatraffic_multicast_locator_list: locators,
             ..Default::default()
         }
     }
