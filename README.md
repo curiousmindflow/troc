@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/curiousmindflow/troc/actions/workflows/ci.yml/badge.svg)](https://github.com/curiousmindflow/troc/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://curiousmindflow.github.io/troc/coverage/badge.json)](https://curiousmindflow.github.io/troc/coverage/tarpaulin-report.html)
-[![Mutation Testing](https://img.shields.io/endpoint?url=https://curiousmindflow.github.io/troc/mutants/badge.json)](https://curiousmindflow.github.io/troc/mutants/)
+[![Mutation Testing](https://img.shields.io/endpoint?url=https://curiousmindflow.github.io/troc/mutants/badge.json)](https://curiousmindflow.github.io/troc/mutants/mutation-report.html)
 
 Troc is a Data Distribution Service implementation in Rust, using [sans-io](https://sans-io.readthedocs.io/) architecture pattern for maximum testability, flexibility, reliability and performance.
 
