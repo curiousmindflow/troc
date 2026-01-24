@@ -53,7 +53,7 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
                         ?target,
                         "TimerActorScheduleTickMessage::Writer delay reached"
                     );
-                    target.tell(DataWriterActorMessage::Tick).await.unwrap()
+                    let _err = target.tell(DataWriterActorMessage::Tick).await;
                 });
             }
             TimerActorScheduleTickMessage::Reader { delay, target } => {
@@ -71,7 +71,7 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
                         ?target,
                         "TimerActorScheduleTickMessage::Reader delay reached"
                     );
-                    target.tell(DataReaderActorMessage::Tick).await.unwrap()
+                    let _err = target.tell(DataReaderActorMessage::Tick).await;
                 });
             }
             TimerActorScheduleTickMessage::Discovery { delay, target, id } => {
@@ -90,7 +90,7 @@ impl Message<TimerActorScheduleTickMessage> for TimerActor {
                         ?target,
                         "TimerActorScheduleTickMessage::Discovery delay reached"
                     );
-                    target.tell(DiscoveryActorMessage::Tick(id)).await.unwrap()
+                    let _err = target.tell(DiscoveryActorMessage::Tick(id)).await;
                 });
             }
         }

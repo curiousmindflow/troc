@@ -9,27 +9,17 @@ use bytes::BytesMut;
 use chrono::Utc;
 use kameo::{Actor, actor::ActorRef, prelude::Message};
 use serde::Deserialize;
-use tokio::{
-    runtime::Handle,
-    select,
-    sync::{
-        Notify,
-        broadcast::{Receiver, Sender, channel},
-    },
-    time::sleep,
+use tokio::sync::{
+    Notify,
+    broadcast::{Receiver, Sender, channel},
 };
-use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span, event};
-use troc_core::{
-    CacheChangeContainer, DdsError, Effect, IncommingMessage, LocatorList, OutcommingMessage,
-    Reader, WriterProxy,
-};
+use troc_core::{CacheChangeContainer, DdsError, Effect, LocatorList, Reader, WriterProxy};
 use troc_core::{Effects, Keyed};
 use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
 
 use crate::{
     DataReaderEvent,
-    discovery::DiscoveryActor,
     infrastructure::QosPolicy,
     subscription::{
         DataReaderListener, condition::ReadCondition, data_sample::DataSample,
@@ -349,7 +339,6 @@ pub struct DataReaderActorCreateObject {
     pub reader: Reader,
     pub qos: InlineQos,
     pub data_availability_notifier: Arc<Notify>,
-    pub discovery: ActorRef<DiscoveryActor>,
     pub timer: ActorRef<TimerActor>,
 }
 
@@ -358,7 +347,6 @@ pub struct DataReaderActor {
     reader: Reader,
     qos: InlineQos,
     effects: Effects,
-    discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
     input_wires: Vec<ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
@@ -374,13 +362,12 @@ impl Actor for DataReaderActor {
 
     async fn on_start(
         args: Self::Args,
-        actor_ref: kameo::prelude::ActorRef<Self>,
+        _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
         let DataReaderActorCreateObject {
             reader,
             qos,
             data_availability_notifier,
-            discovery,
             timer,
         } = args;
 
@@ -390,7 +377,6 @@ impl Actor for DataReaderActor {
             reader,
             qos,
             effects: Effects::default(),
-            discovery,
             timer,
             input_wires: Default::default(),
             output_wires: Default::default(),
@@ -404,11 +390,18 @@ impl Actor for DataReaderActor {
 
     async fn on_stop(
         &mut self,
-        actor_ref: kameo::prelude::WeakActorRef<Self>,
-        reason: kameo::prelude::ActorStopReason,
+        _actor_ref: kameo::prelude::WeakActorRef<Self>,
+        _reason: kameo::prelude::ActorStopReason,
     ) -> Result<(), Self::Error> {
-        // TODO: must tell discovery
-        todo!()
+        for wire in self.input_wires.iter() {
+            wire.stop_gracefully().await.unwrap();
+            wire.wait_for_shutdown().await;
+        }
+        for wire in self.output_wires.values() {
+            wire.stop_gracefully().await.unwrap();
+            wire.wait_for_shutdown().await;
+        }
+        Ok(())
     }
 }
 

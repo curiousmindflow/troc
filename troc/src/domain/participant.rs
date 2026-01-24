@@ -3,11 +3,10 @@ use std::collections::HashMap;
 use kameo::Actor;
 use kameo::actor::{ActorRef, Spawn};
 use kameo::prelude::Message;
-use tokio::sync::broadcast::{Receiver, Sender, channel};
-use tracing::{Level, event};
+use tokio::sync::broadcast::{Receiver, channel};
 use troc_core::builtin_endpoint_qos::BuiltinEndpointQos;
 use troc_core::domain_id::DomainId;
-use troc_core::{DdsError, DiscoveryBuilder, DiscoveryConfiguration, Locator, TickId};
+use troc_core::{DdsError, DiscoveryConfiguration, Locator};
 use troc_core::{DomainTag, EntityId, EntityKey};
 use troc_core::{
     ENTITYID_PARTICIPANT, Guid, ParticipantProxy, TopicKind, VENDORID_UNKNOWN,
@@ -15,7 +14,7 @@ use troc_core::{
 };
 
 use crate::ParticipantEvent;
-use crate::discovery::{DiscoveryActor, DiscoveryActorCreateObject, DiscoveryActorMessage};
+use crate::discovery::{DiscoveryActor, DiscoveryActorCreateObject};
 use crate::publication::{Publisher, PublisherActor, PublisherActorCreateObject};
 use crate::subscription::{Subscriber, SubscriberActor, SubscriberActorCreateObject};
 use crate::time::TimerActor;
@@ -78,11 +77,7 @@ impl DomainParticipantBuilder {
         });
         actor.wait_for_startup().await;
 
-        DomainParticipant {
-            guid,
-            configuration,
-            actor,
-        }
+        DomainParticipant { guid, actor }
     }
 
     fn retrieve_configuration(
@@ -107,7 +102,6 @@ impl DomainParticipantBuilder {
 #[derive(Debug)]
 pub struct DomainParticipant {
     guid: Guid,
-    configuration: Configuration,
     actor: ActorRef<DomainParticipantActor>,
 }
 
@@ -222,9 +216,8 @@ struct DomainParticipantActorCreationObject {
 
 #[derive(Debug)]
 struct DomainParticipantActor {
-    domain_id: u32,
     guid: Guid,
-    infos: ParticipantProxy,
+    _infos: ParticipantProxy,
     config: Configuration,
     timer: ActorRef<TimerActor>,
     wire_factory: ActorRef<WireFactoryActor>,
@@ -261,7 +254,6 @@ impl DomainParticipantActor {
             self.config.clone(),
             publisher_actor,
             self.wire_factory.clone(),
-            self.discovery.clone(),
             self.entity_identifier.clone(),
             self.timer.clone(),
         );
@@ -294,7 +286,6 @@ impl DomainParticipantActor {
             self.config.clone(),
             subscriber_actor,
             self.wire_factory.clone(),
-            self.discovery.clone(),
             self.entity_identifier.clone(),
             self.timer.clone(),
         );
@@ -411,9 +402,8 @@ impl Actor for DomainParticipantActor {
         actor_ref.link(&discovery).await;
 
         let domain_participant_actor = Self {
-            domain_id: args.domain_id,
             guid: args.guid,
-            infos,
+            _infos: infos,
             config: args.configuration,
             timer,
             wire_factory,
@@ -428,174 +418,33 @@ impl Actor for DomainParticipantActor {
 
     async fn on_stop(
         &mut self,
-        actor_ref: kameo::prelude::WeakActorRef<Self>,
-        reason: kameo::prelude::ActorStopReason,
+        _actor_ref: kameo::prelude::WeakActorRef<Self>,
+        _reason: kameo::prelude::ActorStopReason,
     ) -> Result<(), Self::Error> {
-        // stop all publisher and subscriber
-        // stop DiscoveryActor
-        // stop WireFactoryActor
+        for publisher in self.publishers.iter() {
+            publisher.stop_gracefully().await.unwrap();
+            publisher.wait_for_shutdown().await;
+        }
+        for subscriber in self.subscribers.iter() {
+            subscriber.stop_gracefully().await.unwrap();
+            subscriber.wait_for_shutdown().await;
+        }
+        self.discovery.stop_gracefully().await.unwrap();
+        self.discovery.wait_for_shutdown().await;
+        self.timer.stop_gracefully().await.unwrap();
+        self.timer.wait_for_shutdown().await;
+        self.wire_factory.stop_gracefully().await.unwrap();
+        self.wire_factory.wait_for_shutdown().await;
         Ok(())
     }
 
     async fn on_link_died(
         &mut self,
-        actor_ref: kameo::prelude::WeakActorRef<Self>,
-        id: kameo::prelude::ActorId,
-        reason: kameo::prelude::ActorStopReason,
+        _actor_ref: kameo::prelude::WeakActorRef<Self>,
+        _id: kameo::prelude::ActorId,
+        _reason: kameo::prelude::ActorStopReason,
     ) -> Result<std::ops::ControlFlow<kameo::prelude::ActorStopReason>, Self::Error> {
         // relaunch dead Actor if they didn't die on purpose
         panic!()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use kameo::{
-        Actor,
-        actor::{ActorRef, Spawn},
-        error::Infallible,
-        prelude::Message,
-    };
-    use rstest::rstest;
-
-    #[derive(Debug)]
-    struct ParentActor {
-        child: Option<ActorRef<ChildActor>>,
-    }
-
-    impl ParentActor {
-        async fn start_child(parent: &ActorRef<Self>) -> ActorRef<ChildActor> {
-            let child = ChildActor::spawn(ChildActor);
-            child.wait_for_startup().await;
-            child.register("child_actor").unwrap();
-            parent.link(&child).await;
-            child
-        }
-    }
-
-    impl Actor for ParentActor {
-        type Args = Self;
-
-        type Error = Infallible;
-
-        async fn on_start(
-            args: Self::Args,
-            actor_ref: kameo::prelude::ActorRef<Self>,
-        ) -> Result<Self, Self::Error> {
-            let id = actor_ref.id();
-            println!("ParentActor::on_start, id: {id}");
-            let child = Self::start_child(&actor_ref).await;
-            let parent = Self { child: Some(child) };
-            Ok(parent)
-        }
-
-        async fn on_link_died(
-            &mut self,
-            actor_ref: kameo::prelude::WeakActorRef<Self>,
-            id: kameo::prelude::ActorId,
-            reason: kameo::prelude::ActorStopReason,
-        ) -> Result<std::ops::ControlFlow<kameo::prelude::ActorStopReason>, Self::Error> {
-            println!("ParentActor::on_link_died, id: {id}, because of: {reason}");
-            let parent = actor_ref.upgrade().unwrap();
-            let child = Self::start_child(&parent).await;
-            self.child.replace(child);
-            Ok(std::ops::ControlFlow::Continue(()))
-        }
-
-        async fn on_stop(
-            &mut self,
-            actor_ref: kameo::prelude::WeakActorRef<Self>,
-            reason: kameo::prelude::ActorStopReason,
-        ) -> Result<(), Self::Error> {
-            let child = self.child.as_ref().unwrap();
-            if child.stop_gracefully().await.is_ok() {
-                child.wait_for_shutdown().await;
-            }
-            println!("ParentActor::on_stop, because of: {reason}");
-            Ok(())
-        }
-    }
-
-    #[derive(Debug)]
-    struct ChildActor;
-
-    impl Actor for ChildActor {
-        type Args = Self;
-
-        type Error = Infallible;
-
-        async fn on_start(
-            args: Self::Args,
-            actor_ref: kameo::prelude::ActorRef<Self>,
-        ) -> Result<Self, Self::Error> {
-            let id = actor_ref.id();
-            println!("ChildActor::on_start, id: {id}");
-            Ok(args)
-        }
-
-        async fn on_panic(
-            &mut self,
-            actor_ref: kameo::prelude::WeakActorRef<Self>,
-            err: kameo::prelude::PanicError,
-        ) -> Result<std::ops::ControlFlow<kameo::prelude::ActorStopReason>, Self::Error> {
-            println!("ChildActor::on_panic, because of: {err}");
-            Ok(std::ops::ControlFlow::Break(
-                kameo::prelude::ActorStopReason::Panicked(err),
-            ))
-        }
-
-        async fn on_stop(
-            &mut self,
-            actor_ref: kameo::prelude::WeakActorRef<Self>,
-            reason: kameo::prelude::ActorStopReason,
-        ) -> Result<(), Self::Error> {
-            println!("ChildActor::on_stop, because of: {reason}");
-            Ok(())
-        }
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    enum ChildActorMessage {
-        Do,
-        Crash,
-    }
-
-    impl Message<ChildActorMessage> for ChildActor {
-        type Reply = ();
-
-        async fn handle(
-            &mut self,
-            msg: ChildActorMessage,
-            ctx: &mut kameo::prelude::Context<Self, Self::Reply>,
-        ) -> Self::Reply {
-            match msg {
-                ChildActorMessage::Do => println!("ChildActor::handle, msg: {msg:?}"),
-                ChildActorMessage::Crash => panic!(),
-            }
-        }
-    }
-
-    #[rstest]
-    #[case::doo(ChildActorMessage::Do)]
-    #[case::crash(ChildActorMessage::Crash)]
-    #[tokio::test]
-    async fn child_do(#[case] msg: ChildActorMessage) {
-        // let dp =
-        //     DomainParticipantBuilder::new(0, Configuration::default(), "dp".to_string(), false)
-        //         .await
-        //         .build();
-
-        let parent = ParentActor::spawn(ParentActor { child: None });
-        parent.wait_for_startup().await;
-
-        let child_ref = ActorRef::<ChildActor>::lookup("child_actor")
-            .unwrap()
-            .unwrap();
-
-        child_ref.tell(msg).await.unwrap();
-        child_ref.tell(ChildActorMessage::Do).await.unwrap();
-
-        parent.stop_gracefully().await.unwrap();
-        parent.wait_for_shutdown().await;
     }
 }

@@ -30,7 +30,6 @@ pub struct Subscriber {
     qos: QosPolicy,
     subscriber_actor: ActorRef<SubscriberActor>,
     wire_factory: ActorRef<WireFactoryActor>,
-    discovery: ActorRef<DiscoveryActor>,
     entity_identifier: ActorRef<EntityIdentifierActor>,
     timer: ActorRef<TimerActor>,
 }
@@ -44,7 +43,6 @@ impl Subscriber {
         config: Configuration,
         subscriber_actor: ActorRef<SubscriberActor>,
         wire_factory: ActorRef<WireFactoryActor>,
-        discovery: ActorRef<DiscoveryActor>,
         entity_identifier: ActorRef<EntityIdentifierActor>,
         timer: ActorRef<TimerActor>,
     ) -> Self {
@@ -53,7 +51,6 @@ impl Subscriber {
             qos,
             subscriber_actor,
             wire_factory,
-            discovery,
             entity_identifier,
             timer,
         }
@@ -111,7 +108,6 @@ impl Subscriber {
             reader,
             qos: inline_qos.clone(),
             data_availability_notifier: data_availability_notifier.clone(),
-            discovery: self.discovery.clone(),
             timer: self.timer.clone(),
         });
 
@@ -200,5 +196,17 @@ impl Actor for SubscriberActor {
         };
 
         Ok(subscriber_actor)
+    }
+
+    async fn on_stop(
+        &mut self,
+        _actor_ref: kameo::prelude::WeakActorRef<Self>,
+        _reason: kameo::prelude::ActorStopReason,
+    ) -> Result<(), Self::Error> {
+        for datawreader in self.readers.iter() {
+            datawreader.stop_gracefully().await.unwrap();
+            datawreader.wait_for_shutdown().await;
+        }
+        Ok(())
     }
 }

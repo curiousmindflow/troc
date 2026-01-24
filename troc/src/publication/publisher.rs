@@ -34,7 +34,6 @@ pub struct Publisher {
     qos: QosPolicy,
     publisher_actor: ActorRef<PublisherActor>,
     wire_factory: ActorRef<WireFactoryActor>,
-    discovery: ActorRef<DiscoveryActor>,
     entity_identifier: ActorRef<EntityIdentifierActor>,
     timer: ActorRef<TimerActor>,
 }
@@ -48,7 +47,6 @@ impl Publisher {
         config: Configuration,
         publisher_actor: ActorRef<PublisherActor>,
         wire_factory: ActorRef<WireFactoryActor>,
-        discovery: ActorRef<DiscoveryActor>,
         entity_identifier: ActorRef<EntityIdentifierActor>,
         timer: ActorRef<TimerActor>,
     ) -> Self {
@@ -57,7 +55,6 @@ impl Publisher {
             qos,
             publisher_actor,
             wire_factory,
-            discovery,
             entity_identifier,
             timer,
         }
@@ -112,7 +109,6 @@ impl Publisher {
         let writer_actor = DataWriterActor::spawn(DataWriterActorCreateObject {
             writer,
             qos: inline_qos.clone(),
-            discovery: self.discovery.clone(),
             timer: self.timer.clone(),
         });
 
@@ -195,5 +191,17 @@ impl Actor for PublisherActor {
         };
 
         Ok(publisher_actor)
+    }
+
+    async fn on_stop(
+        &mut self,
+        _actor_ref: kameo::prelude::WeakActorRef<Self>,
+        _reason: kameo::prelude::ActorStopReason,
+    ) -> Result<(), Self::Error> {
+        for datawriter in self.writers.iter() {
+            datawriter.stop_gracefully().await.unwrap();
+            datawriter.wait_for_shutdown().await;
+        }
+        Ok(())
     }
 }

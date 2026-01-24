@@ -32,15 +32,15 @@ pub fn one_to_one(c: &mut Criterion) {
     let mut group = c.benchmark_group("one_to_one");
     group.warm_up_time(Duration::from_secs(2));
 
-    let bundle = runtime.block_on(SimpleDDSBundle::new(
-        TopicKind::NoKey,
-        ReliabilityKind::BestEffort,
-        "/benchmark/latency/besteffort_nokey",
-        HistoryQosPolicy::KeepLast { depth: 1 },
-    ));
-    let bundle = Arc::new(Mutex::new(bundle));
-
     for size in [1, 4 * K, 32 * K, 59 * K].into_iter() {
+        let bundle = runtime.block_on(SimpleDDSBundle::new(
+            TopicKind::NoKey,
+            ReliabilityKind::BestEffort,
+            "/benchmark/latency/besteffort_nokey",
+            HistoryQosPolicy::KeepLast { depth: 1 },
+        ));
+        let bundle = Arc::new(Mutex::new(bundle));
+
         group.throughput(criterion::Throughput::Bytes(size as u64));
 
         group.bench_with_input(BenchmarkId::new("one_to_one", size), &size, |b, size| {

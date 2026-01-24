@@ -375,7 +375,7 @@ where
                             }
                             recv_result = wire.recv() => {
                                 if let Ok(msg) = recv_result {
-                                    actor_dest.tell(T::build_message(msg)).await.unwrap();
+                                    let _err = actor_dest.tell(T::build_message(msg)).await;
                                 }
                             }
                         }

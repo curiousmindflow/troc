@@ -2,7 +2,6 @@ use std::{collections::HashMap, marker::PhantomData};
 
 use crate::{
     DataWriterEvent,
-    discovery::DiscoveryActor,
     infrastructure::QosPolicy,
     publication::DataWriterListener,
     time::{TimerActor, TimerActorScheduleTickMessage},
@@ -236,7 +235,6 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
 pub struct DataWriterActorCreateObject {
     pub writer: Writer,
     pub qos: InlineQos,
-    pub discovery: ActorRef<DiscoveryActor>,
     pub timer: ActorRef<TimerActor>,
 }
 
@@ -245,7 +243,6 @@ pub struct DataWriterActor {
     writer: Writer,
     qos: InlineQos,
     effects: Effects,
-    discovery: ActorRef<DiscoveryActor>,
     timer: ActorRef<TimerActor>,
     input_wires: Vec<ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
@@ -260,14 +257,9 @@ impl Actor for DataWriterActor {
 
     async fn on_start(
         args: Self::Args,
-        actor_ref: kameo::prelude::ActorRef<Self>,
+        _actor_ref: kameo::prelude::ActorRef<Self>,
     ) -> Result<Self, Self::Error> {
-        let DataWriterActorCreateObject {
-            writer,
-            qos,
-            discovery,
-            timer,
-        } = args;
+        let DataWriterActorCreateObject { writer, qos, timer } = args;
 
         let (event_sender, event_receiver) = channel(64);
 
@@ -275,7 +267,6 @@ impl Actor for DataWriterActor {
             writer,
             qos,
             effects: Effects::default(),
-            discovery,
             timer,
             input_wires: Default::default(),
             output_wires: Default::default(),
@@ -288,11 +279,18 @@ impl Actor for DataWriterActor {
 
     async fn on_stop(
         &mut self,
-        actor_ref: kameo::prelude::WeakActorRef<Self>,
-        reason: kameo::prelude::ActorStopReason,
+        _actor_ref: kameo::prelude::WeakActorRef<Self>,
+        _reason: kameo::prelude::ActorStopReason,
     ) -> Result<(), Self::Error> {
-        // TODO: must tell discovery
-        todo!()
+        for wire in self.input_wires.iter() {
+            wire.stop_gracefully().await.unwrap();
+            wire.wait_for_shutdown().await;
+        }
+        for wire in self.output_wires.values() {
+            wire.stop_gracefully().await.unwrap();
+            wire.wait_for_shutdown().await;
+        }
+        Ok(())
     }
 }
 
