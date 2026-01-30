@@ -161,17 +161,18 @@ impl Message<DataWriterActorMessage> for DataWriterActor {
             }
             DataWriterActorMessage::AddProxy { proxy, wires } => {
                 self.output_wires.extend(wires);
-                self.writer.add_proxy(proxy.clone());
-                self.timer
-                    .tell(TimerActorScheduleTickMessage::Writer {
-                        delay: 100,
-                        target: ctx.actor_ref().clone(),
-                    })
-                    .await
-                    .unwrap();
+                self.writer.add_proxy(&mut self.effects, now, proxy.clone());
+                // self.timer
+                //     .tell(TimerActorScheduleTickMessage::Writer {
+                //         delay: 1000,
+                //         target: ctx.actor_ref().clone(),
+                //     })
+                //     .await
+                //     .unwrap();
                 let res = self
                     .event_sender
                     .send(DataWriterEvent::SubscriptionMatched(proxy));
+                event!(Level::ERROR, "DataWriter received AddProxy");
             }
             DataWriterActorMessage::RemoveProxy { guid, locators } => {
                 for locator in locators {

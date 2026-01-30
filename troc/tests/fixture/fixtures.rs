@@ -3,8 +3,10 @@
 use std::{str::FromStr, time::Duration};
 
 use crate::fixture::DummyStruct;
+use opentelemetry::global;
 use rstest::fixture;
 use tracing::{Level, event, level_filters::LevelFilter};
+use tracing_opentelemetry::OpenTelemetryLayer;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use troc::{
     Configuration, DataReader, DataWriter, DeadlineQosPolicy, DomainParticipant,
@@ -40,13 +42,63 @@ pub struct ThreeParticipantsBundle {
     pub gamma_reader: DataReader<DummyStruct>,
 }
 
+// #[rstest]
+// #[tokio::test]
+// async fn jaeger_test() {
+//     let exporter = opentelemetry_otlp::new_exporter()
+//         .tonic()
+//         .with_endpoint("http://host.docker.internal:4317");
+
+//     let tracer = opentelemetry_otlp::new_pipeline()
+//         .tracing()
+//         .with_exporter(exporter)
+//         .with_trace_config(
+//             trace::config().with_resource(Resource::new(vec![KeyValue::new(
+//                 opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+//                 SERVICE_NAME.to_string(),
+//             )])),
+//         )
+//         .install_batch(opentelemetry::runtime::Tokio)
+//         .expect("Error: Failed to initialize the tracer.");
+
+//     let telemetry = tracing_opentelemetry::OpenTelemetryLayer::new(tracer);
+
+//     let filter_layer = EnvFilter::builder()
+//         .with_default_directive(LevelFilter::TRACE.into())
+//         .from_env_lossy()
+//         .add_directive("neli=warn".parse().unwrap())
+//         .add_directive("tokio=info".parse().unwrap())
+//         .add_directive("hyper=info".parse().unwrap());
+
+//     let stdout_layer = tracing_subscriber::fmt::layer()
+//         .with_line_number(true)
+//         .with_target(true);
+
+//     let registry = tracing_subscriber::registry()
+//         .with(telemetry_layer)
+//         .with(stdout_layer)
+//         .with(filter_layer);
+
+//     registry.try_init().unwrap();
+
+//     let span = tracing::span!(tracing::Level::TRACE, "MY_TEST");
+//     let _guard = span.enter();
+
+//     tracing::info!("Hello from test");
+
+//     drop(_guard);
+//     global::shutdown_tracer_provider();
+//     sleep(Duration::from_secs(2)).await;
+// }
+
 #[fixture]
-#[once]
 pub fn setup_log() {
     let filter_layer = EnvFilter::builder()
         .with_default_directive(LevelFilter::TRACE.into())
         .from_env_lossy()
-        .add_directive("neli=warn".parse().unwrap());
+        .add_directive("neli=warn".parse().unwrap())
+        .add_directive("tokio=info".parse().unwrap())
+        .add_directive("hyper=info".parse().unwrap());
 
     let stdout_layer = tracing_subscriber::fmt::layer()
         .with_line_number(true)
@@ -166,6 +218,8 @@ pub async fn three_participants(
         .with_config(configuration.clone())
         .build()
         .await;
+    let mut alpha_domain_participant_listener =
+        alpha_domain_participant.get_listener().await.unwrap();
 
     let qos = alpha_domain_participant
         .create_qos_builder()
@@ -205,6 +259,8 @@ pub async fn three_participants(
         .with_config(configuration.clone())
         .build()
         .await;
+    let mut beta_domain_participant_listener =
+        beta_domain_participant.get_listener().await.unwrap();
 
     let mut beta_subscriber = beta_domain_participant
         .create_subscriber(&qos)
@@ -233,6 +289,9 @@ pub async fn three_participants(
         .build()
         .await;
 
+    let mut gamma_domain_participant_listener =
+        gamma_domain_participant.get_listener().await.unwrap();
+
     let mut gamma_subscriber = gamma_domain_participant
         .create_subscriber(&qos)
         .await
@@ -253,6 +312,42 @@ pub async fn three_participants(
         .await
         .unwrap();
     let mut gamma_writer_listener = gamma_writer.get_listener().await.unwrap();
+
+    println!("START WAITING ON EVENTS");
+
+    let _event = alpha_domain_participant_listener
+        .wait_participant_discovered(DurationKind::Infinite)
+        .await
+        .unwrap();
+    let _event = alpha_domain_participant_listener
+        .wait_participant_discovered(DurationKind::Infinite)
+        .await
+        .unwrap();
+
+    println!("ALPHA PARTICIPANT AVE DISCOVERED BETA and GAMMA");
+
+    let _event = beta_domain_participant_listener
+        .wait_participant_discovered(DurationKind::Infinite)
+        .await
+        .unwrap();
+    let _event = beta_domain_participant_listener
+        .wait_participant_discovered(DurationKind::Infinite)
+        .await
+        .unwrap();
+
+    println!("BETA PARTICIPANT AVE DISCOVERED ALPHA and GAMMA");
+
+    let _event = gamma_domain_participant_listener
+        .wait_participant_discovered(DurationKind::Infinite)
+        .await
+        .unwrap();
+    let _event = gamma_domain_participant_listener
+        .wait_participant_discovered(DurationKind::Infinite)
+        .await
+        .unwrap();
+
+    println!("GAMMA PARTICIPANT AVE DISCOVERED ALPHA and BETA");
+    println!("ALL PARTICIPANTS AVE DISCOVERED EACH OTHERS");
 
     let _event = alpha_reader_listener
         .wait_publication_matched(DurationKind::Infinite)

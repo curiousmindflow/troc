@@ -1,3 +1,5 @@
+use crate::GuidPrefix;
+
 use super::{header::Header, submessages::submessage::Submessage};
 use binrw::{BinRead, BinResult, BinWrite, binrw};
 use bytes::{Buf, BufMut, BytesMut};
@@ -65,6 +67,10 @@ fn submessages_parser(len: (usize,)) -> BinResult<Vec<Submessage>> {
 }
 
 impl Message {
+    pub fn get_guid_prefix(&self) -> GuidPrefix {
+        self.header.guid_prefix
+    }
+
     pub fn size(&self) -> u64 {
         let mut size = 0;
         size += size_of::<Header>();

@@ -1,9 +1,4 @@
-use std::{
-    collections::HashMap,
-    marker::PhantomData,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Duration};
 
 use bytes::BytesMut;
 use chrono::Utc;
@@ -13,7 +8,7 @@ use tokio::sync::{
     Notify,
     broadcast::{Receiver, Sender, channel},
 };
-use tracing::{Level, Span, event};
+use tracing::{Level, Span, event, instrument};
 use troc_core::{CacheChangeContainer, DdsError, Effect, LocatorList, Reader, WriterProxy};
 use troc_core::{Effects, Keyed};
 use troc_core::{Guid, InlineQos, Locator, SerializedData, cdr};
@@ -37,7 +32,7 @@ pub struct DataReader<T> {
     guid: Guid,
     qos: InlineQos,
     data_reader_actor: ActorRef<DataReaderActor>,
-    data_availability_notifier: Arc<Notify>,
+    data_availability_notifier: tokio::sync::mpsc::Receiver<()>,
     phantom: PhantomData<T>,
 }
 
@@ -46,7 +41,7 @@ impl<T> DataReader<T> {
         guid: Guid,
         qos: QosPolicy,
         data_reader_actor: ActorRef<DataReaderActor>,
-        data_availability_notifier: Arc<Notify>,
+        data_availability_notifier: tokio::sync::mpsc::Receiver<()>,
     ) -> Self {
         Self {
             guid,
@@ -84,7 +79,11 @@ impl<T> DataReader<T> {
                     let sample = DataSample::<SerializedData>::new(infos, data);
                     return Ok(sample);
                 }
-                None => self.data_availability_notifier.notified().await,
+                None => {
+                    event!(Level::WARN, "waiting for data_availability_notifier");
+                    self.data_availability_notifier.recv().await;
+                    event!(Level::WARN, "data_availability_notifier triggered");
+                }
             }
         }
     }
@@ -105,6 +104,7 @@ impl<T> DataReader<T> {
         unimplemented!()
     }
 
+    #[instrument(skip_all, fields(reader_guid = %self.guid))]
     pub async fn read_next_sample(&mut self) -> Result<DataSample<T>, DdsError>
     where
         for<'a> T: Deserialize<'a> + 'static + Keyed,
@@ -202,6 +202,7 @@ pub enum DataReaderActorReadOneMessage {
 impl Message<DataReaderActorReadOneMessage> for DataReaderActor {
     type Reply = Option<CacheChangeContainer>;
 
+    #[instrument(name = "datareader", skip_all, fields(guid = %self.reader.get_guid()))]
     async fn handle(
         &mut self,
         msg: DataReaderActorReadOneMessage,
@@ -210,6 +211,17 @@ impl Message<DataReaderActorReadOneMessage> for DataReaderActor {
         match msg {
             DataReaderActorReadOneMessage::Read {} => {
                 let a = self.reader.get_first_available_change();
+                if a.is_some() {
+                    event!(
+                        Level::ERROR,
+                        "DataReader retrieve first available change from Reader: get first available change"
+                    );
+                } else {
+                    event!(
+                        Level::ERROR,
+                        "DataReader retrieve first available change from Reader: no available change"
+                    );
+                }
                 a.cloned()
             }
         }
@@ -254,6 +266,7 @@ pub enum DataReaderActorMessage {
 impl Message<DataReaderActorMessage> for DataReaderActor {
     type Reply = ();
 
+    #[instrument(name = "datareader", skip_all, fields(guid = %self.reader.get_guid()))]
     async fn handle(
         &mut self,
         msg: DataReaderActorMessage,
@@ -296,7 +309,8 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
         while let Some(effect) = self.effects.pop() {
             match effect {
                 Effect::DataAvailable => {
-                    self.data_availability_notifier.notify_one();
+                    event!(Level::ERROR, "Reader declared data available");
+                    self.data_availability_notifier.send(()).await.unwrap();
                 }
                 Effect::Message {
                     timestamp_millis,
@@ -338,7 +352,7 @@ impl Message<DataReaderActorMessage> for DataReaderActor {
 pub struct DataReaderActorCreateObject {
     pub reader: Reader,
     pub qos: InlineQos,
-    pub data_availability_notifier: Arc<Notify>,
+    pub data_availability_notifier: tokio::sync::mpsc::Sender<()>,
     pub timer: ActorRef<TimerActor>,
 }
 
@@ -350,7 +364,7 @@ pub struct DataReaderActor {
     timer: ActorRef<TimerActor>,
     input_wires: Vec<ActorRef<ReceiverWireActor>>,
     output_wires: HashMap<Locator, ActorRef<SenderWireActor>>,
-    data_availability_notifier: Arc<Notify>,
+    data_availability_notifier: tokio::sync::mpsc::Sender<()>,
     _event_receiver: Option<Receiver<DataReaderEvent>>,
     event_sender: Sender<DataReaderEvent>,
 }

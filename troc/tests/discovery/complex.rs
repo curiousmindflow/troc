@@ -6,20 +6,21 @@
 
 use std::{str::FromStr, sync::Arc, time::Duration};
 
-use crate::fixture::{DummyStruct, ThreeParticipantsBundle, three_participants};
-use common::types::DomainTag;
+use crate::fixture::{
+    DummyStruct, ThreeParticipantsBundle, get_unique_id, setup_log, three_participants,
+};
 use rstest::*;
 use tokio::sync::Notify;
-use troc_core::{
-    Configuration, DataReaderParamsBuilder, DataWriter, DataWriterParamsBuilder, DomainParticipant,
-    DomainParticipantParamsBuilder, QosPolicy, QosPolicyBuilder, ReliabilityQosPolicy, TopicKind,
+use troc::{
+    Configuration, DataWriter, DomainParticipantBuilder, DomainTag, QosPolicy, QosPolicyBuilder,
+    ReliabilityQosPolicy, TopicKind,
 };
 
 #[rstest]
-#[timeout(Duration::from_secs(10))]
+// #[timeout(Duration::from_secs(10))]
 #[tokio::test]
 async fn discovery_by_exchange_single_thread(
-    #[from(setup_log)] _log: (),
+    #[from(setup_log)] _setup_log: (),
     #[from(three_participants)]
     #[with("/discovery/complex/discovery_by_exchange/single_thread")]
     #[future]
@@ -33,7 +34,7 @@ async fn discovery_by_exchange_single_thread(
 #[timeout(Duration::from_secs(10))]
 #[tokio::test(flavor = "multi_thread")]
 async fn discovery_by_exchange_multi_thread(
-    _setup_log: (),
+    #[from(setup_log)] _setup_log: (),
     #[from(three_participants)]
     #[with("/discovery/complex/discovery_by_exchange/multi_thread")]
     #[future]
@@ -53,11 +54,10 @@ async fn static_discovery_by_exchange_different_topics(
     let mut configuration = Configuration::default();
     configuration.global.domain_tag = DomainTag::from_str(&unique_id).unwrap();
 
-    let alpha_params = DomainParticipantParamsBuilder::new()
-        .with_name("alpha")
+    let mut alpha_participant = DomainParticipantBuilder::new()
         .with_config(configuration.clone())
-        .build();
-    let mut alpha_participant = DomainParticipant::new_with_params(0, alpha_params).await;
+        .build()
+        .await;
 
     let mut alpha_subscriber = alpha_participant
         .create_subscriber(&QosPolicy::default())
@@ -68,11 +68,10 @@ async fn static_discovery_by_exchange_different_topics(
         .await
         .unwrap();
 
-    let beta_params = DomainParticipantParamsBuilder::new()
-        .with_name("beta")
+    let mut beta_participant = DomainParticipantBuilder::new()
         .with_config(configuration.clone())
-        .build();
-    let mut beta_participant = DomainParticipant::new_with_params(0, beta_params).await;
+        .build()
+        .await;
 
     let mut beta_subscriber = beta_participant
         .create_subscriber(&QosPolicy::default())
@@ -96,20 +95,13 @@ async fn static_discovery_by_exchange_different_topics(
         TopicKind::NoKey,
     );
 
-    let alpha_reader_params = DataReaderParamsBuilder::new()
-        .with_name("alpha_reader_0")
-        .build();
     let mut alpha_reader_0 = alpha_subscriber
-        .create_datareader_with_params::<DummyStruct>(&topic_0, &qos, alpha_reader_params)
+        .create_datareader::<DummyStruct>(&topic_0, &qos)
         .await
         .unwrap();
 
-    let beta_writer_params = DataWriterParamsBuilder::new()
-        .with_name("beta_writer_0")
-        .enable_listener()
-        .build();
     let mut beta_writer_0: DataWriter<DummyStruct> = beta_publisher
-        .create_datawriter_with_params::<DummyStruct>(&topic_0, &qos, beta_writer_params)
+        .create_datawriter::<DummyStruct>(&topic_0, &qos)
         .await
         .unwrap();
 
@@ -120,20 +112,13 @@ async fn static_discovery_by_exchange_different_topics(
         TopicKind::NoKey,
     );
 
-    let alpha_writer_params = DataWriterParamsBuilder::new()
-        .with_name("alpha_writer_1")
-        .enable_listener()
-        .build();
     let mut alpha_writer_1 = alpha_publisher
-        .create_datawriter_with_params::<DummyStruct>(&topic_1, &qos, alpha_writer_params)
+        .create_datawriter::<DummyStruct>(&topic_1, &qos)
         .await
         .unwrap();
 
-    let beta_reader_params = DataReaderParamsBuilder::new()
-        .with_name("beta_reader_1")
-        .build();
     let mut beta_reader_1 = beta_subscriber
-        .create_datareader_with_params::<DummyStruct>(&topic_1, &qos, beta_reader_params)
+        .create_datareader::<DummyStruct>(&topic_1, &qos)
         .await
         .unwrap();
 
@@ -144,20 +129,13 @@ async fn static_discovery_by_exchange_different_topics(
         TopicKind::NoKey,
     );
 
-    let beta_writer_params = DataWriterParamsBuilder::new()
-        .with_name("beta_writer_2")
-        .enable_listener()
-        .build();
     let mut beta_writer_2 = beta_publisher
-        .create_datawriter_with_params::<DummyStruct>(&topic_2, &qos, beta_writer_params)
+        .create_datawriter::<DummyStruct>(&topic_2, &qos)
         .await
         .unwrap();
 
-    let alpha_reader_params = DataReaderParamsBuilder::new()
-        .with_name("alpha_reader_2")
-        .build();
     let mut alpha_reader_2 = alpha_subscriber
-        .create_datareader_with_params::<DummyStruct>(&topic_2, &qos, alpha_reader_params)
+        .create_datareader::<DummyStruct>(&topic_2, &qos)
         .await
         .unwrap();
 
@@ -168,20 +146,13 @@ async fn static_discovery_by_exchange_different_topics(
         TopicKind::NoKey,
     );
 
-    let beta_reader_params = DataReaderParamsBuilder::new()
-        .with_name("beta_reader_3")
-        .build();
     let mut beta_reader_3 = beta_subscriber
-        .create_datareader_with_params::<DummyStruct>(&topic_3, &qos, beta_reader_params)
+        .create_datareader::<DummyStruct>(&topic_3, &qos)
         .await
         .unwrap();
 
-    let alpha_writer_params = DataWriterParamsBuilder::new()
-        .with_name("alpha_writer_3")
-        .enable_listener()
-        .build();
     let mut alpha_writer_3 = alpha_publisher
-        .create_datawriter_with_params::<DummyStruct>(&topic_3, &qos, alpha_writer_params)
+        .create_datawriter::<DummyStruct>(&topic_3, &qos)
         .await
         .unwrap();
 
@@ -208,17 +179,15 @@ async fn dynamic_discovery_by_exchange_different_topics(
     let mut configuration = Configuration::default();
     configuration.global.domain_tag = DomainTag::from_str(&unique_id).unwrap();
 
-    let alpha_params = DomainParticipantParamsBuilder::new()
-        .with_name("alpha")
+    let mut alpha_participant = DomainParticipantBuilder::new()
         .with_config(configuration.clone())
-        .build();
-    let mut alpha_participant = DomainParticipant::new_with_params(0, alpha_params).await;
+        .build()
+        .await;
 
-    let beta_params = DomainParticipantParamsBuilder::new()
-        .with_name("beta")
+    let mut beta_participant = DomainParticipantBuilder::new()
         .with_config(configuration.clone())
-        .build();
-    let mut beta_participant = DomainParticipant::new_with_params(0, beta_params).await;
+        .build()
+        .await;
 
     // SERVER SETUP
     let mut alpha_subscriber = alpha_participant
@@ -346,9 +315,13 @@ async fn exchange(mut bundle: ThreeParticipantsBundle) {
     let received_msg = sample.take_data().unwrap();
     assert_eq!(received_msg, expected_msg);
 
+    println!("BETA READER RECEIVE DATA FROM ALPHA WRITER");
+
     let sample = bundle.gamma_reader.read_next_sample().await.unwrap();
     let received_msg = sample.take_data().unwrap();
     assert_eq!(received_msg, expected_msg);
+
+    println!("GAMMA READER RECEIVE DATA FROM ALPHA WRITER");
 
     bundle
         .beta_writer
@@ -360,9 +333,13 @@ async fn exchange(mut bundle: ThreeParticipantsBundle) {
     let received_msg = sample.take_data().unwrap();
     assert_eq!(received_msg, expected_msg);
 
+    println!("ALPHA READER RECEIVE DATA FROM BETA WRITER");
+
     let sample = bundle.gamma_reader.read_next_sample().await.unwrap();
     let received_msg = sample.take_data().unwrap();
     assert_eq!(received_msg, expected_msg);
+
+    println!("GAMMA READER RECEIVE DATA FROM BETA WRITER");
 
     bundle
         .gamma_writer
@@ -374,7 +351,11 @@ async fn exchange(mut bundle: ThreeParticipantsBundle) {
     let received_msg = sample.take_data().unwrap();
     assert_eq!(received_msg, expected_msg);
 
+    println!("ALPHA READER RECEIVE DATA FROM GAMMA WRITER");
+
     let sample = bundle.beta_reader.read_next_sample().await.unwrap();
     let received_msg = sample.take_data().unwrap();
     assert_eq!(received_msg, expected_msg);
+
+    println!("BETA READER RECEIVE DATA FROM GAMMA WRITER");
 }

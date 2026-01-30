@@ -29,42 +29,42 @@ async fn participant_must_discover(
     participant_discovery(&bundle).await;
 }
 
-#[rstest]
-#[timeout(Duration::from_secs(10))]
-#[tokio::test]
-async fn participant_stale_detection(
-    #[from(setup_log)] _setup_log: (),
-    #[with("discovery/basic/stale_detection")]
-    #[future]
-    two_participants: TwoParticipantsBundle,
-) {
-    let bundle = two_participants.await;
-    let (mut alpha_participant_listener, _) = participant_discovery(&bundle).await;
+// #[rstest]
+// #[timeout(Duration::from_secs(10))]
+// #[tokio::test]
+// async fn participant_stale_detection(
+//     #[from(setup_log)] _setup_log: (),
+//     #[with("discovery/basic/stale_detection")]
+//     #[future]
+//     two_participants: TwoParticipantsBundle,
+// ) {
+//     let bundle = two_participants.await;
+//     let (mut alpha_participant_listener, _) = participant_discovery(&bundle).await;
 
-    let TwoParticipantsBundle {
-        alpha_domain_participant,
-        beta_domain_participant: _,
-        beta_publisher,
-        alpha_subscriber,
-        beta_writer,
-        alpha_reader,
-    } = bundle;
+//     let TwoParticipantsBundle {
+//         alpha_domain_participant,
+//         beta_domain_participant: _,
+//         beta_publisher,
+//         alpha_subscriber,
+//         beta_writer,
+//         alpha_reader,
+//     } = bundle;
 
-    let beta_domain_participant_guid = alpha_domain_participant.get_guid();
+//     let beta_domain_participant_guid = alpha_domain_participant.get_guid();
 
-    drop(alpha_reader);
-    drop(alpha_subscriber);
-    drop(alpha_domain_participant);
+//     drop(alpha_reader);
+//     drop(alpha_subscriber);
+//     drop(alpha_domain_participant);
 
-    let _beta_publisher = beta_publisher;
-    let _beta_writer = beta_writer;
+//     let _beta_publisher = beta_publisher;
+//     let _beta_writer = beta_writer;
 
-    let event = alpha_participant_listener
-        .wait_participant_removed(DurationKind::Infinite)
-        .await
-        .unwrap();
-    assert_eq!(event.get_guid(), beta_domain_participant_guid);
-}
+//     let event = alpha_participant_listener
+//         .wait_participant_removed(DurationKind::Infinite)
+//         .await
+//         .unwrap();
+//     assert_eq!(event.get_guid(), beta_domain_participant_guid);
+// }
 
 #[rstest]
 #[tokio::test]

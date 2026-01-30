@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::ops::{Deref, DerefMut};
 
 use crate::types::{
@@ -21,7 +22,7 @@ pub struct CacheChangeInfos {
     pub inline_qos: Option<InlineQos>,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct CacheChange {
     pub infos: CacheChangeInfos,
     pub data: Option<SerializedData>,
@@ -105,6 +106,19 @@ impl From<FragmentedCacheChange> for CacheChange {
     }
 }
 
+impl Debug for CacheChange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CacheChange")
+            .field("infos", &self.infos)
+            .field("data.presence", &self.data.is_some())
+            .field(
+                "data.size",
+                &self.data.as_ref().map(|d| d.size()).unwrap_or_default(),
+            )
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CacheChangeContainer {
     change: CacheChange,
@@ -121,6 +135,14 @@ impl CacheChangeContainer {
 
     pub fn get_sample_state_kind(&self) -> SampleStateKind {
         self.readed
+    }
+
+    pub fn sample_state_kind(&self) -> SampleStateKind {
+        self.readed
+    }
+
+    pub fn set_sample_state_kind(&mut self, state: SampleStateKind) {
+        self.readed = state;
     }
 
     pub fn mark_read(&mut self) {

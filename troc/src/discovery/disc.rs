@@ -204,7 +204,7 @@ impl DiscoveryActor {
                 Effect::Message {
                     timestamp_millis,
                     message,
-                    locators,
+                    mut locators,
                 } => {
                     let span = span!(Level::TRACE, "message", ?locators, output_wires = ?self.output_wires);
                     let _enter = span.enter();
@@ -218,6 +218,10 @@ impl DiscoveryActor {
                     })
                     .await
                     .unwrap();
+
+                    // locators.sort();
+                    // locators.dedup();
+
                     for locator in locators.iter() {
                         if let Some(actor) = self.output_wires.get(locator) {
                             event!(Level::TRACE, "Message sent to {locator}");
@@ -233,10 +237,22 @@ impl DiscoveryActor {
                     event!(Level::DEBUG, "Effect::Message processed");
                 }
                 Effect::ParticipantMatch { participant_proxy } => {
+                    let (output_wires, locators) = self
+                        .wire_factory
+                        .ask(SenderWireFactoryActorMessage::FromLocators {
+                            locators: participant_proxy.metatraffic_unicast_locator_list.clone(),
+                        })
+                        .await
+                        .unwrap();
+                    let output_wires: HashMap<Locator, ActorRef<SenderWireActor>> =
+                        HashMap::from_iter(locators.iter().zip(output_wires).map(|(a, b)| (*a, b)));
+                    self.output_wires.extend(output_wires);
+
                     let participant_proxy_str = participant_proxy.to_string();
                     let _res = self
                         .event_sender
                         .send(ParticipantEvent::ParticipantDiscovered { participant_proxy });
+
                     event!(
                         Level::DEBUG,
                         participant_proxy = participant_proxy_str,
@@ -362,6 +378,8 @@ impl DiscoveryActor {
                             })
                             .await
                             .unwrap();
+
+                        // TODO: local writer must immediately send a heartbeat
                     }
                 }
                 Effect::ScheduleTick { id, delay } => {

@@ -4,9 +4,9 @@ use crate::{
     common::TickId,
     messages::{Message, MessageFactory, MessageReceiver, SubmessageContent},
     types::{
-        ChangeKind, ContentNature, ENTITYID_UNKOWN, EntityId, FragmentNumber, Guid,
-        HistoryQosPolicy, InlineQos, InstanceHandle, LocatorList, ReliabilityKind, SequenceNumber,
-        SequenceNumberSet, SerializedData, Timestamp, sequence_number::SEQUENCENUMBER_UNKNOWN,
+        ChangeKind, ContentNature, ENTITYID_UNKOWN, EntityId, Guid, HistoryQosPolicy, InlineQos,
+        InstanceHandle, LocatorList, ReliabilityKind, SequenceNumber, SequenceNumberSet,
+        SerializedData, Timestamp, sequence_number::SEQUENCENUMBER_UNKNOWN,
     },
 };
 use chrono::Utc;
@@ -178,7 +178,7 @@ impl Writer {
         }
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(skip_all, fields(entity_id = %self.guid.get_entity_id()))]
     pub fn add_change(&mut self, effects: &mut Effects, change: CacheChange) -> Result<(), Error> {
         self.cache.push_change(change).unwrap();
         self.produce_data(self.last_change_sequence_number, effects)
@@ -187,7 +187,7 @@ impl Writer {
     /// Process an incomming message if it contains a Acknack or a NackFrag submessage
     ///
     /// Each Acknack will records positive and/or negative acknowledgments and call [`NackedDataSchedulePort::on_nacked_data_schedule`] if one was provided
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(skip_all, fields())]
     pub fn ingest(
         &mut self,
         effects: &mut Effects,
@@ -291,7 +291,7 @@ impl Writer {
         Ok(())
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(skip_all, fields(entity_id = %self.guid.get_entity_id()))]
     pub fn tick(&mut self, effects: &mut Effects, now: i64) {
         if matches!(self.is_reliable, ReliabilityKind::BestEffort) {
             event!(Level::WARN, "BestEffort Writer doesn't send HEARTBEAT");
@@ -361,8 +361,6 @@ impl Writer {
                             requested_change.get_inline_qos().cloned(),
                             requested_change.data.clone(),
                         );
-                        // TODO: flag 'requested_change_sequence' as not a requested change anymore (not acked, neither) for if there is
-                        // a call to this method (Self::produce_nacked_data(..) several times consecutively, this message will not be produced each time)
                     } else {
                         gaps.push(request_change_sequence);
                     }
@@ -389,28 +387,33 @@ impl Writer {
         }
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
-    pub fn add_proxy(&mut self, proxy: ReaderProxy) {
+    #[instrument(skip_all, fields(entity_id = %self.guid.get_entity_id()))]
+    pub fn add_proxy(&mut self, effects: &mut Effects, now: i64, proxy: ReaderProxy) {
         self.matched_readers
             .insert(proxy.get_remote_reader_guid(), proxy);
+        self.tick(effects, now);
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(skip_all, fields(entity_id = %self.guid.get_entity_id()))]
     pub fn remove_proxy(&mut self, proxy_guid: Guid) {
         self.matched_readers.remove(&proxy_guid);
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(skip_all, fields(entity_id = %self.guid.get_entity_id()))]
     pub fn lookup_proxy(&mut self, proxy_guid: Guid) -> bool {
         self.matched_readers.contains_key(&proxy_guid)
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    pub fn get_proxies(&self) -> Vec<ReaderProxy> {
+        self.matched_readers.values().cloned().collect::<Vec<_>>()
+    }
+
+    #[instrument(skip_all, fields(entity_id = %self.guid.get_entity_id()))]
     pub fn add_unicast_locators(&mut self, mut locators: LocatorList) {
         self.unicast_locator_list.append(&mut locators);
     }
 
-    #[instrument(level = Level::TRACE, skip_all, fields(entity_id = ?self.guid.get_entity_id(), matched_readers = ?self.matched_readers))]
+    #[instrument(skip_all, fields(entity_id = %self.guid.get_entity_id()))]
     pub fn add_multicast_locators(&mut self, mut locators: LocatorList) {
         self.multicast_locator_list.append(&mut locators);
     }
@@ -492,31 +495,20 @@ impl Writer {
     }
 
     fn build_gap_infos(gaps: &[SequenceNumber]) -> Option<(SequenceNumber, SequenceNumberSet)> {
-        let gap_first = *gaps.first()?;
-
-        let mut gap_last = gap_first;
-        let mut gap_last_pos = 0;
-        let mut gaps_peekable_iter = gaps.iter().peekable();
-        while let Some((pos, &gap)) = gaps_peekable_iter.clone().enumerate().next() {
-            gap_last = gap;
-            gap_last_pos = pos;
-            let Some(&&next) = gaps_peekable_iter.peek() else {
-                break;
-            };
-            if next > gap + 1 {
+        let mut gaps_iter = gaps.iter().enumerate();
+        let (_, first) = gaps_iter.next()?;
+        let mut last = *first;
+        let mut last_pos = 0;
+        for (i, current) in gaps_iter {
+            if *current == last + 1 {
+                last = *current;
+                last_pos = i;
+            } else {
                 break;
             }
         }
-        let gap_unconsecutives = gaps
-            .iter()
-            .skip(gap_last_pos + 1)
-            .cloned()
-            .collect::<Vec<_>>();
 
-        Some((
-            gap_first,
-            SequenceNumberSet::new(gap_last, &gap_unconsecutives),
-        ))
+        Some((*first, SequenceNumberSet::new(last, &gaps[last_pos..])))
     }
 
     pub fn extract_proxy(&self) -> WriterProxy {
@@ -533,6 +525,7 @@ impl Writer {
 #[cfg(test)]
 mod test {
     use crate::{
+        CacheChangeInfos, Submessage, SubmessageContent, Timestamp,
         common::TickId,
         messages::{Message, MessageFactory},
         types::{
@@ -540,7 +533,6 @@ mod test {
             ReliabilityKind, SequenceNumber, SequenceNumberSet, SerializedData,
         },
     };
-    use chrono::Utc;
     use rstest::{fixture, rstest};
 
     use crate::{
@@ -593,6 +585,7 @@ mod test {
         #[from(setup_ack)] message: Message,
     ) {
         let mut effects = Effects::new();
+
         let change = writer.new_change(
             ChangeKind::Alive,
             Some(SerializedData::from_vec(vec![0, 1, 2, 3])),
@@ -602,9 +595,7 @@ mod test {
         writer.add_change(&mut effects, change).unwrap();
         effects.clean();
 
-        let now = Utc::now().timestamp_millis();
-
-        writer.ingest(&mut effects, now, message).unwrap();
+        writer.ingest(&mut effects, 0, message).unwrap();
 
         effects.consume(|e| {
             let Effect::ScheduleTick {
@@ -625,23 +616,115 @@ mod test {
     }
 
     #[rstest]
-    fn tick(
+    fn produce_heartbeat(
         #[from(setup_writer)]
         #[with(ReliabilityKind::Reliable)]
         mut writer: Writer,
     ) {
         let mut effects = Effects::new();
 
-        // TODO:
+        let heartbeat_counter = writer.heartbeat_counter.get();
+        assert_eq!(heartbeat_counter, Count::new(0));
+
         let reader_proxy = writer.matched_readers.values_mut().next().unwrap();
         reader_proxy.highest_sent_change_sn = SequenceNumber(1);
-        // tweak internal fields value to let Writer believe he has acknowledged changes / unacknowledged changes
-        // call tick()
-        let now = Utc::now().timestamp_millis();
 
-        writer.tick(&mut effects, now);
-        // assert Message effect is produced, with correct content
-        // TODO: effects should contains a Message (Heartbeat) and a Message (Data)
+        writer.tick(&mut effects, 0);
+
+        assert_eq!(writer.heartbeat_counter.get(), heartbeat_counter + 1);
+
+        let Some(Effect::Message { message, .. }) = effects.pop() else {
+            panic!()
+        };
+        let Some(Submessage {
+            content:
+                SubmessageContent::Heartbeat {
+                    first_sn: SequenceNumber(1),
+                    last_sn: SequenceNumber(0),
+                    count: Count(0),
+                    ..
+                },
+            ..
+        }) = message.submessages.first()
+        else {
+            panic!()
+        };
+    }
+
+    #[rstest]
+    fn produce_repaired_data(
+        #[from(setup_writer)]
+        #[with(ReliabilityKind::Reliable)]
+        mut writer: Writer,
+    ) {
+        let mut effects = Effects::new();
+
+        let (_, proxy) = writer.matched_readers.iter_mut().next().unwrap();
+        proxy.requested_changes_set(vec![SequenceNumber(1)]);
+        writer
+            .cache
+            .push_change(CacheChange {
+                infos: CacheChangeInfos {
+                    kind: ChangeKind::Alive,
+                    writer_guid: proxy.get_remote_reader_guid(),
+                    instance_handle: InstanceHandle::default(),
+                    sequence_number: SequenceNumber(1),
+                    sample_size: 0,
+                    fragment_size: 0,
+                    fragments_count: 0,
+                    emission_timestamp: None,
+                    reception_timestamp: Timestamp::default(),
+                    inline_qos: None,
+                },
+                data: None,
+            })
+            .unwrap();
+
+        writer.tick(&mut effects, 0);
+
+        let Some(Effect::Message { message, .. }) = effects.pop() else {
+            panic!()
+        };
+        let Some(Submessage {
+            content:
+                SubmessageContent::Data {
+                    writer_sn: SequenceNumber(1),
+                    ..
+                },
+            ..
+        }) = message.submessages.first()
+        else {
+            panic!()
+        };
+    }
+
+    #[rstest]
+    fn produce_gap(
+        #[from(setup_writer)]
+        #[with(ReliabilityKind::Reliable)]
+        mut writer: Writer,
+    ) {
+        let mut effects = Effects::new();
+
+        let (_, proxy) = writer.matched_readers.iter_mut().next().unwrap();
+        proxy.requested_changes_set(vec![SequenceNumber(1)]);
+
+        writer.tick(&mut effects, 0);
+
+        let Some(Effect::Message { message, .. }) = effects.pop() else {
+            panic!()
+        };
+        let Some(Submessage {
+            content:
+                SubmessageContent::Gap {
+                    gap_start: SequenceNumber(1),
+                    ..
+                },
+            ..
+        }) = message.submessages.first()
+        else {
+            panic!()
+        };
     }
 
     fn new_change_helper(writer: &mut Writer) -> CacheChange {
@@ -683,7 +766,8 @@ mod test {
             .with_configuration(conf)
             .reliability(reliable)
             .build();
-        writer.add_proxy(proxy);
+        let mut effects = Effects::new();
+        writer.add_proxy(&mut effects, 0, proxy);
         writer
     }
 

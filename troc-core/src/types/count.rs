@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[binrw]
 #[br(import(_len: usize))]
-pub struct Count(i32);
+pub struct Count(pub(crate) i32);
 
 impl Count {
     pub fn new(c: i32) -> Self {

@@ -1,6 +1,7 @@
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use tokio::net::UdpSocket;
+use tracing::{Level, event};
 use troc::cdr::{CdrLe, Infinite};
 use troc::{
     DDSType, DataReader, DataWriter, DomainParticipant, DurationKind, HistoryQosPolicy,
@@ -242,6 +243,8 @@ impl OneWriterManyReaderDDSBundle {
             .wait_subscription_matched(DurationKind::Infinite)
             .await
             .unwrap();
+
+        event!(Level::INFO, "Bundle ready");
 
         Self {
             _alpha_p: alpha_p,

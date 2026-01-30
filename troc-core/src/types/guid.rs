@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Display};
+use std::fmt::{Debug, Display, Write};
 
 use binrw::binrw;
 use pretty_hex::PrettyHex;
@@ -78,7 +78,7 @@ impl Display for Guid {
 
 impl Debug for Guid {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format!("{}.{}", self.guid_prefix, self.entity_id))?;
+        f.write_str(&format!("{:?}.{:?}", self.guid_prefix, self.entity_id))?;
         Ok(())
     }
 }
@@ -297,11 +297,45 @@ impl EntityId {
 
 impl Display for EntityId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format!(
-            "{}.{}",
-            self.entity_key.hex_conf(PRETTY_HEX_CONFIG),
-            self.entity_kind
-        ))?;
+        let str_repr = match *self {
+            ENTITYID_UNKOWN => "ENTITYID_UNKOWN",
+            ENTITYID_PARTICIPANT => "ENTITYID_PARTICIPANT",
+            ENTITYID_SEDP_BUILTIN_PUBLICATIONS_ANNOUNCER => {
+                "ENTITYID_SEDP_BUILTIN_PUBLICATIONS_ANNOUNCER"
+            }
+            ENTITYID_SEDP_BUILTIN_PUBLICATIONS_DETECTOR => {
+                "ENTITYID_SEDP_BUILTIN_PUBLICATIONS_DETECTOR"
+            }
+            ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER => {
+                "ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER"
+            }
+            ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR => {
+                "ENTITYID_SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR"
+            }
+            ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER => {
+                "ENTITYID_SPDP_BUILTIN_PARTICIPANT_ANNOUNCER"
+            }
+            ENTITYID_SPDP_BUILTIN_PARTICIPANT_DETECTOR => {
+                "ENTITYID_SPDP_BUILTIN_PARTICIPANT_DETECTOR"
+            }
+            ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER => {
+                "ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER"
+            }
+            ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER => {
+                "ENTITYID_P2P_BUILTIN_PARTICIPANT_MESSAGE_READER"
+            }
+            ENTITYID_SEDP_BUILTIN_TOPICS_ANNOUNCER => "ENTITYID_SEDP_BUILTIN_TOPICS_ANNOUNCER",
+            ENTITYID_SEDP_BUILTIN_TOPICS_DETECTOR => "ENTITYID_SEDP_BUILTIN_TOPICS_DETECTOR",
+            id => {
+                f.write_fmt(format_args!(
+                    "{}.{}",
+                    self.entity_key.hex_conf(PRETTY_HEX_CONFIG),
+                    id.entity_kind
+                ))?;
+                return Ok(());
+            }
+        };
+        f.write_str(str_repr)?;
         Ok(())
     }
 }

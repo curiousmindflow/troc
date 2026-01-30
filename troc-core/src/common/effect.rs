@@ -1,3 +1,7 @@
+use std::fmt::{Debug, Display};
+
+use itertools::Itertools;
+
 use crate::{ParticipantProxy, messages::Message, types::LocatorList};
 
 use crate::discovery::{DiscoveredReaderData, DiscoveredWriterData};
@@ -64,6 +68,16 @@ impl Effects {
     }
 }
 
+impl Display for Effects {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[")?;
+        let str_repr = self.0.iter().join(",");
+        f.write_str(&str_repr)?;
+        f.write_str("]")?;
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub enum Effect {
     DataAvailable,
@@ -93,4 +107,19 @@ pub enum Effect {
         id: TickId,
         delay: i64,
     },
+}
+
+impl Display for Effect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Effect::DataAvailable { .. } => f.write_str("Effect::DataAvailable"),
+            Effect::Message { .. } => f.write_str("Effect::Message"),
+            Effect::Qos => f.write_str("Effect::Qos"),
+            Effect::ParticipantMatch { .. } => f.write_str("Effect::ParticipantMatch"),
+            Effect::ParticipantRemoved { .. } => f.write_str("Effect::ParticipantRemoved"),
+            Effect::ReaderMatch { .. } => f.write_str("Effect::ReaderMatch"),
+            Effect::WriterMatch { .. } => f.write_str("Effect::WriterMatch"),
+            Effect::ScheduleTick { .. } => f.write_str("Effect::ScheduleTick"),
+        }
+    }
 }

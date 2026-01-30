@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::fixture::{DummyStruct, TwoParticipantsBundle};
 
 mod basic;
-// mod complex;
+mod complex;
 mod matching;
 
 const DOMAIN_ID_98: u32 = 98;

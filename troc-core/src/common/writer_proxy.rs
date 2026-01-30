@@ -7,13 +7,16 @@ use chrono::Utc;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
-use crate::types::{
-    EntityId, FragmentNumber, Locator, SEQUENCENUMBER_INVALID,
-    change_count::ChangeCount,
-    change_from_writer_status_kind::ChangeFromWriterStatusKind,
-    guid::Guid,
-    locator_list::LocatorList,
-    sequence_number::{SEQUENCENUMBER_UNKNOWN, SequenceNumber},
+use crate::{
+    Count,
+    types::{
+        EntityId, FragmentNumber, Locator,
+        change_count::ChangeCount,
+        change_from_writer_status_kind::ChangeFromWriterStatusKind,
+        guid::Guid,
+        locator_list::LocatorList,
+        sequence_number::{SEQUENCENUMBER_UNKNOWN, SequenceNumber},
+    },
 };
 
 use crate::{
@@ -39,6 +42,10 @@ pub struct WriterProxy {
     pub(crate) acknack_counter: Counter,
     #[serde(skip)]
     pub(crate) nackfrag_counter: Counter,
+    #[serde(skip)]
+    pub(crate) htb_count: Count,
+    #[serde(skip)]
+    pub(crate) htbfrag_count: Count,
 }
 
 impl WriterProxy {
@@ -60,6 +67,8 @@ impl WriterProxy {
             last_heartbeat_timestamp_ms: Utc::now().timestamp_millis(),
             acknack_counter: Counter::new(),
             nackfrag_counter: Counter::new(),
+            htb_count: Count::default(),
+            htbfrag_count: Count::default(),
         }
     }
 
@@ -347,6 +356,8 @@ impl Clone for WriterProxy {
             last_heartbeat_timestamp_ms: Default::default(),
             acknack_counter: Counter::new(),
             nackfrag_counter: Counter::new(),
+            htb_count: Count::default(),
+            htbfrag_count: Count::default(),
         }
     }
 }
@@ -374,6 +385,8 @@ impl Debug for WriterProxy {
             .field("data_max_size_serialized", &self.data_max_size_serialized)
             .field("changes_from_writer_map", &self.changes_from_writer_map)
             .field("missing_frags", &self.missing_frags)
+            .field("htb_count", &self.htb_count)
+            .field("htbfrag_count", &self.htbfrag_count)
             .finish()
     }
 }

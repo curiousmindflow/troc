@@ -72,19 +72,19 @@ impl Subscriber {
     where
         for<'a> T: Deserialize<'a> + Keyed + 'static,
     {
-        let writer_key: EntityKey = self
+        let reader_key: EntityKey = self
             .entity_identifier
             .ask(EntityIdentifierActorAskMessage::AskReaderId)
             .await
             .unwrap()
             .into();
 
-        let writer_id = if matches!(topic.topic_kind, TopicKind::WithKey) {
-            EntityId::writer_with_key(writer_key.0)
+        let reader_id = if matches!(topic.topic_kind, TopicKind::WithKey) {
+            EntityId::reader_with_key(reader_key.0)
         } else {
-            EntityId::writer_no_key(writer_key.0)
+            EntityId::reader_no_key(reader_key.0)
         };
-        let reader_guid = Guid::new(self.guid.get_guid_prefix(), writer_id);
+        let reader_guid = Guid::new(self.guid.get_guid_prefix(), reader_id);
 
         let reliable = qos.reliability().into();
         let mut inline_qos: InlineQos = (*qos).into();
@@ -103,11 +103,12 @@ impl Subscriber {
             .build();
         let reader_proxy = reader.extract_proxy();
 
-        let data_availability_notifier = Arc::new(Notify::new());
+        let (data_availability_notifier_sender, data_availability_notifier_receiver) =
+            tokio::sync::mpsc::channel(64);
         let reader_actor = DataReaderActor::spawn(DataReaderActorCreateObject {
             reader,
             qos: inline_qos.clone(),
-            data_availability_notifier: data_availability_notifier.clone(),
+            data_availability_notifier: data_availability_notifier_sender,
             timer: self.timer.clone(),
         });
 
@@ -115,7 +116,7 @@ impl Subscriber {
             reader_guid,
             *qos,
             reader_actor.clone(),
-            data_availability_notifier,
+            data_availability_notifier_receiver,
         )
         .await;
 

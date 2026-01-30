@@ -75,7 +75,7 @@ impl UdpV4Wire {
             socket
                 .join_multicast_v4(&ipv4_sockaddr_connect, &Ipv4Addr::new(0, 0, 0, 0))
                 .unwrap();
-            socket.set_multicast_loop_v4(true).unwrap();
+            // socket.set_multicast_loop_v4(true).unwrap();
         } else {
             let sockaddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 0);
             let sockaddr = SockAddr::from(sockaddr);
@@ -109,7 +109,7 @@ impl UdpV4Wire {
                 panic!()
             };
             socket.join_multicast_v4(&ipv4_sockaddr_connect, &Ipv4Addr::new(0, 0, 0, 0))?;
-            socket.set_multicast_loop_v4(true)?;
+            // socket.set_multicast_loop_v4(true)?;
         }
 
         Ok(socket)

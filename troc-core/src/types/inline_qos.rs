@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::{Debug, Display};
 
 use binrw::{BinRead, BinWrite, Endian, binrw};
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use super::{
 };
 
 #[derive(
-    Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, BinRead, BinWrite,
+    Default, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, BinRead, BinWrite,
 )]
 #[bw(map = Self::to_parameter_list)]
 #[br(map = |inline_qos| Self::from_parameter_list(inline_qos, Endian::Big))]
@@ -112,5 +112,21 @@ impl Display for InlineQos {
             self.topic_name, self.type_name, self.key_hash, self.durability, self.deadline, self.reliability, self.lifespan, self.history, self.liveness
         ))?;
         Ok(())
+    }
+}
+
+impl Debug for InlineQos {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("InlineQos")
+            .field("topic_name", &self.topic_name)
+            .field("type_name", &self.type_name)
+            .field("key_hash", &self.key_hash)
+            .field("durability", &self.durability)
+            .field("deadline", &self.deadline)
+            .field("reliability", &self.reliability)
+            .field("lifespan", &self.lifespan)
+            .field("history", &self.history)
+            .field("liveness", &self.liveness)
+            .finish()
     }
 }

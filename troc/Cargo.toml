@@ -54,7 +54,11 @@ anyhow = "1.0.100"
 proptest = "1.7.0"
 rstest = "0.25.0"
 tokio-test = "0.4.4"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "fmt"] }
+tracing-opentelemetry = "0.21"
+opentelemetry = { version = "0.19", features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version="0.12.0",  features = ["tonic", "metrics"] }
+opentelemetry-semantic-conventions = { version="0.11.0" }
 regex = "1.8.4"
 clap = { version = "4.3.2", features = ["derive", "env"] }
 ctrlc = "3.2.1"

@@ -9,7 +9,7 @@ use crate::{
 
 #[rstest]
 #[case(ReliabilityQosPolicy::Reliable { max_blocking_time: Default::default() }, ReliabilityQosPolicy::Reliable { max_blocking_time: Default::default() })]
-// #[case( ReliabilityQosPolicy::BestEffort, ReliabilityQosPolicy::Reliable { max_blocking_time: Default::default() })]
+#[case( ReliabilityQosPolicy::BestEffort, ReliabilityQosPolicy::Reliable { max_blocking_time: Default::default() })]
 // #[case(ReliabilityQosPolicy::BestEffort, ReliabilityQosPolicy::BestEffort)]
 // #[should_panic]
 // #[case::should_not_match( ReliabilityQosPolicy::Reliable { max_blocking_time: Default::default() }, ReliabilityQosPolicy::BestEffort)]

@@ -1,0 +1,12 @@
+{
+  "configurations": [
+    {
+      "type": "bugstalker",
+      "request": "launch",
+      "name": "Launch",
+      "program": "${workspaceFolder}/target/debug/<program>",
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
